@@ -47,3 +47,16 @@ compose_report:
     daily_market_brief.md file path and Slack message ID confirming post.
   output_file: daily_market_brief.md
   agent: report_composer_agent
+
+compose_report_followup:
+  description: >
+    Generate the end‑of‑morning market briefing in clear, blog‑style
+    English. Include: (1) top political headlines; (2) ETF performance with
+    drivers; (3) intraday outlook for ~5 equities; (4) global macro / geo‑
+    political events; (5) sentiment & volatility snapshot. Format in
+    markdown with headings, bold tickers, and a timestamp footer. Save to
+    daily_market_brief.md and post to Slack #market‑briefings.
+  expected_output: >
+    daily_market_brief.md file path and Slack message ID confirming post.
+  output_file: daily_market_brief.md
+  agent: report_composer_agent

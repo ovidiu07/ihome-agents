@@ -37,6 +37,13 @@ $ crewai run
 
 This command initializes the research_stocks Crew, assembling the agents and assigning them tasks as defined in your configuration.
 
+### Cost controls
+
+The crew uses multiple LLM models to keep expenses in check. Data gathering and
+valuation run on GPT‑3.5, while analysis and report writing rely on GPT‑4 with
+token limits. Setting the `CACHE_DIR` environment variable enables API response
+caching for repeated runs.
+
 This example, unmodified, will run the create a `report.md` file with the output of a research on LLMs in the root folder.
 
 ## Understanding Your Crew
