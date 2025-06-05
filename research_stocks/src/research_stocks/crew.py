@@ -32,6 +32,14 @@ report_llm = LLM(model="openai/gpt-4",
                  temperature=0.8, max_tokens=2048, top_p=0.9,
                  frequency_penalty=0.1, presence_penalty=0.1, seed=42)
 
+
+def get_appropriate_llm(task_complexity: str) -> LLM:
+    if task_complexity == "low":
+        return cheap_llm
+    if task_complexity == "medium":
+        return analysis_llm
+    return report_llm
+
 AGENTOPS_API_KEY = os.getenv("AGENTOPS_API_KEY") or 'cd414e33-e4a2-44ec-a71f-b30360462ee8'
 agentops.init(
     api_key=AGENTOPS_API_KEY,
@@ -57,7 +65,7 @@ class StockAnalysisCrew:
     @agent
     def data_harvester_agent(self) -> Agent:
         return Agent(config=self.agents_config['data_harvester'], verbose=True,
-                     llm=cheap_llm, tools=[PoliticalNewsTool(), ETFDataTool(),
+                     llm=get_appropriate_llm("low"), tools=[PoliticalNewsTool(), ETFDataTool(),
                                      EquityFundamentalsTool(), GlobalEventsTool(),
                                      SentimentScanTool(), ])
 
@@ -76,7 +84,7 @@ class StockAnalysisCrew:
     @agent
     def valuation_engine_agent(self) -> Agent:
         return Agent(config=self.agents_config['valuation_engine'], verbose=True,
-                     llm=cheap_llm,
+                     llm=get_appropriate_llm("low"),
                      tools=[FundamentalMathTool(), HistoricalFinancialsTool(), ])
 
     @task
@@ -93,7 +101,7 @@ class StockAnalysisCrew:
     @agent
     def pattern_scanner_agent(self) -> Agent:
         return Agent(config=self.agents_config['pattern_scanner'], verbose=True,
-                     llm=analysis_llm,
+                     llm=get_appropriate_llm("medium"),
                      tools=[MarketPriceTool(), TALibTool(), WebsiteSearchTool(), ])
 
     @task
@@ -110,7 +118,7 @@ class StockAnalysisCrew:
     @agent
     def report_composer_agent(self) -> Agent:
         return Agent(config=self.agents_config['report_composer'], verbose=True,
-                     llm=report_llm, tools=[MarkdownFormatterTool(),
+                     llm=get_appropriate_llm("high"), tools=[MarkdownFormatterTool(),
                                      GrammarCheckTool(), ScrapeWebsiteTool(),
                                      WebsiteSearchTool(), ])
 
