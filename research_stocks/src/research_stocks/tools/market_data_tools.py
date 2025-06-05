@@ -1,7 +1,65 @@
 # src/tools/market_data_tools.py
-import os, requests, datetime, json
+import os, requests, datetime, json, hashlib, time, logging
+from pathlib import Path
 from crewai.tools import BaseTool
 from crewai.tools.base_tool import BaseTool
+
+CACHE_DIR = os.getenv("CACHE_DIR")
+
+def track_token_usage(model: str, prompt_tokens: int, completion_tokens: int):
+  logging.info(
+    f"Token usage - Model: {model}, Prompt: {prompt_tokens}, Completion: {completion_tokens}"
+  )
+
+class RateLimiter:
+  def __init__(self, calls_per_second: int = 1):
+    self.calls_per_second = calls_per_second
+    self.last_call_time = 0.0
+
+  def wait_if_needed(self):
+    current = time.time()
+    delta = current - self.last_call_time
+    if delta < 1 / self.calls_per_second:
+      time.sleep(1 / self.calls_per_second - delta)
+    self.last_call_time = time.time()
+
+
+def _request_with_retries(url: str, *, max_retries: int = 3, initial_delay: int = 1, rate_limiter: RateLimiter | None = None):
+  delay = initial_delay
+  for attempt in range(max_retries):
+    try:
+      if rate_limiter:
+        rate_limiter.wait_if_needed()
+      resp = requests.get(url, timeout=15)
+      resp.raise_for_status()
+      return resp.json()
+    except Exception:
+      if attempt == max_retries - 1:
+        raise
+      time.sleep(delay)
+      delay *= 2
+
+
+def _validate_response(data: dict, required_fields: list[str]):
+  if not all(field in data for field in required_fields):
+    raise ValueError(f"Invalid response: missing required fields {required_fields}")
+  return data
+
+
+def _get_cache_path(name: str, key: str, ttl: int | None = None) -> Path | None:
+  if not CACHE_DIR:
+    return None
+  path = Path(CACHE_DIR)
+  path.mkdir(parents=True, exist_ok=True)
+  cache_file = path / f"{name}_{key}.json"
+  if ttl is not None and cache_file.exists():
+    age = time.time() - cache_file.stat().st_mtime
+    if age > ttl:
+      try:
+        cache_file.unlink()
+      except FileNotFoundError:
+        pass
+  return cache_file
 
 # ------------- DATA HARVESTER TOOLS ----------------------------------- #
 
@@ -18,7 +76,16 @@ class PoliticalNewsTool(BaseTool):
       f"?q={query}&from={days_back}d&sortBy=publishedAt&pageSize=100"
       f"&apiKey={api_key}"
     )
-    return requests.get(url, timeout=20).json()["articles"]
+    cache_key = hashlib.sha1(url.encode()).hexdigest()[:8]
+    cache_path = _get_cache_path(self.name, cache_key, ttl=3600)
+    if cache_path and cache_path.exists():
+      with open(cache_path) as f:
+        return json.load(f)
+    data = _request_with_retries(url, rate_limiter=RateLimiter(1)).get("articles", [])
+    if cache_path:
+      with open(cache_path, "w") as f:
+        json.dump(data, f)
+    return data
 
 
 class ETFDataTool(BaseTool):
@@ -29,9 +96,21 @@ class ETFDataTool(BaseTool):
     symbols = symbols or ["SPY", "QQQ", "DIA"]
     key = os.getenv("POLYGON_KEY")
     out = {}
+    symbols_str = ",".join(symbols)
+    url = f"https://api.polygon.io/v2/aggs/tickers?tickers={symbols_str}&apiKey={key}"
+    cache_key = hashlib.sha1(url.encode()).hexdigest()[:8]
+    cache_path = _get_cache_path(self.name, cache_key, ttl=86400)
+    if cache_path and cache_path.exists():
+      with open(cache_path) as f:
+        data = json.load(f)
+    else:
+      data = _request_with_retries(url, rate_limiter=RateLimiter(2))
+      if cache_path:
+        with open(cache_path, "w") as f:
+          json.dump(data, f)
     for sym in symbols:
-      url = f"https://api.polygon.io/v2/aggs/ticker/{sym}/prev?apiKey={key}"
-      out[sym] = requests.get(url, timeout=10).json()["results"][0]
+      if sym in data.get("results", {}):
+        out[sym] = data["results"][sym][0] if isinstance(data["results"], dict) else data["results"][0]
     return out
 
 
@@ -45,7 +124,16 @@ class EquityFundamentalsTool(BaseTool):
       "https://www.alphavantage.co/query"
       f"?function=EARNINGS&symbol={ticker}&apikey={key}"
     )
-    data = requests.get(url, timeout=15).json()
+    cache_key = hashlib.sha1(url.encode()).hexdigest()[:8]
+    cache_path = _get_cache_path(self.name, cache_key, ttl=86400)
+    if cache_path and cache_path.exists():
+      with open(cache_path) as f:
+        data = json.load(f)
+    else:
+      data = _request_with_retries(url, rate_limiter=RateLimiter(2))
+      if cache_path:
+        with open(cache_path, "w") as f:
+          json.dump(data, f)
     return data.get("annualEarnings", [])[:1]  # most recent year
 
 
@@ -107,7 +195,16 @@ class MarketPriceTool(BaseTool):
       f"https://api.polygon.io/v2/aggs/ticker/{ticker}"
       f"/range/1/day/{start}/{end}?apiKey={key}&adjusted=true&sort=asc"
     )
-    return requests.get(url, timeout=15).json()["results"]
+    cache_key = hashlib.sha1(url.encode()).hexdigest()[:8]
+    cache_path = _get_cache_path(self.name, cache_key, ttl=86400)
+    if cache_path and cache_path.exists():
+      with open(cache_path) as f:
+        return json.load(f)
+    data = _request_with_retries(url, rate_limiter=RateLimiter(2)).get("results", [])
+    if cache_path:
+      with open(cache_path, "w") as f:
+        json.dump(data, f)
+    return data
 
 
 class TALibTool(BaseTool):
@@ -160,4 +257,22 @@ class GrammarCheckTool(BaseTool):
         temperature=0.2,
         max_tokens= len(text)//3
     )
+    usage = resp.usage
+    track_token_usage("openai/gpt-4", usage.prompt_tokens, usage.completion_tokens)
     return resp.choices[0].message.content
+
+
+def check_api_health() -> dict:
+  apis = {
+    "polygon": "https://api.polygon.io/v2/reference/status",
+    "alphavantage": "https://www.alphavantage.co/query?function=TIME_SERIES_INTRADAY&symbol=IBM&interval=5min&apikey=demo",
+    "newsapi": "https://newsapi.org/v2/top-headlines?country=us&apiKey=demo",
+  }
+  results = {}
+  for name, url in apis.items():
+    try:
+      resp = requests.get(url, timeout=5)
+      results[name] = resp.status_code == 200
+    except Exception:
+      results[name] = False
+  return results
