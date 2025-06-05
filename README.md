@@ -17,7 +17,4 @@ This repository hosts the **ResearchStocks** crew built with [crewAI](https://cr
    crewai run
    ```
 
-The project now includes token usage monitoring and automatic error recovery. If the
-crew fails, a fallback message is posted to Slack `#market-ops`.
-
 See `research_stocks/README.md` for full documentation and customisation options.
