@@ -1,0 +1,140 @@
+# ---------------------------------------------------------------------------
+# CrewAI Agent Configuration – Daily Market Briefing (Europe/Bucharest)
+# ---------------------------------------------------------------------------
+# Four specialised agents aligned with your briefing spec.  Extra keys
+# (schedule, triggers, outputs, error_handling) are advisory metadata; CrewAI
+# ignores unknown fields.
+# ---------------------------------------------------------------------------
+
+data_harvester:
+  role: >
+    Senior Market Data Harvester | Runs 07:00 EET trading days
+  goal: >
+    By 07:05 fetch, deduplicate and tag all raw inputs (political news, ETF
+    metrics, equity fundamentals, global macro events, sentiment) and emit
+    JSON artefacts for downstream analysis.
+  backstory: >
+    A Reuters-trained data journalist with backend chops who never misses a
+    datapoint and labels each item with an accurate market-impact score.
+  # ETF universe (top 20 by AUM / liquidity as of 2025 – cross‑sector mix)
+  etf_watchlist:
+    - SPY   # S&P 500
+    - QQQ   # Nasdaq‑100
+    - IVV   # Core S&P 500 (iShares)
+    - VTI   # Total US Market
+    - VOO   # Vanguard S&P 500
+    - DIA   # Dow 30
+    - IWM   # Russell 2000
+    - EEM   # Emerging Markets (iShares)
+    - IEMG  # Core Emerging Mkts
+    - XLK   # Technology Select
+    - XLF   # Financials Select
+    - XLV   # Health Care Select
+    - XLE   # Energy Select
+    - XLY   # Consumer Discretionary
+    - XLI   # Industrials Select
+    - VNQ   # US Real‑Estate REITs
+    - TLT   # 20+ Yr Treasury Bond
+    - LQD   # Investment‑Grade Corp Bond
+    - HYG   # High‑Yield Corp Bond
+    - ARKK  # ARK Innovation (thematic growth)
+  schedule: "CRON: 0 7 * * 1-5"        # 07:00 Mon–Fri Bucharest
+  triggers:
+    - slack:/harvest-now
+  #  tools:
+  #    - PoliticalNewsTool
+  #    - ETFDataTool
+  #    - EquityFundamentalsTool
+  #    - GlobalEventsTool
+  #    - SentimentScanTool
+  outputs:
+    - raw_political_news.json
+    - raw_etf_data.json
+    - raw_equity_fundamentals.json
+    - raw_global_events.json
+    - raw_sentiment.json
+  error_handling: >
+    Retry each API up to 3× with exponential back-off; on final failure send
+    Slack alert #market-ops.
+
+  # High‑liquidity large‑cap equities to track intraday (2025 watch‑list)
+  equity_watchlist:
+    - NVDA   # NVIDIA
+    - TSLA   # Tesla
+    - AAPL   # Apple
+    - MSFT   # Microsoft
+    - AMZN   # Amazon
+    - META   # Meta Platforms
+    - GOOGL  # Alphabet‑Class A
+    - BRK.B  # Berkshire Hathaway‑B
+    - JPM    # JPMorgan Chase
+    - UNH    # UnitedHealth
+    - XOM    # Exxon Mobil
+    - NFLX   # Netflix
+
+valuation_engine:
+  role: >
+    Equity & ETF Valuation Engine | Event-driven
+  goal: >
+    Transform harvested fundamentals into valuation insights, calculate key
+    multiples, benchmark versus history & peers, and model intraday drift.
+  backstory: >
+    A CFA-charterholder quant fluent in statistics, living to convert balance
+    sheets into razor-sharp conclusions.
+  triggers:
+    - on_file: raw_equity_fundamentals.json
+    - on_file: raw_etf_data.json
+  #  tools:
+  #    - FundamentalMathTool
+  #    - HistoricalFinancialsTool
+  outputs:
+    - fundamental_summary.json
+  error_handling: >
+    If data completeness < 90 %, tag affected tickers “Data Incomplete” and
+    continue; confidence < 0.4 → mark “Low Confidence”.
+
+pattern_scanner:
+  role: >
+    Pattern & Indicator Scanner | Event-driven
+  goal: >
+    Detect chart patterns, indicator cross-overs, reconcile signals with
+    fundamentals, and emit a unified strength score per symbol.
+  backstory: >
+    An algo-trading wizard who recognises technical patterns faster than
+    most humans read a headline.
+  triggers:
+    - on_file: fundamental_summary.json
+  #  tools:
+  #    - MarketPriceTool
+  #    - TALibTool
+  outputs:
+    - technical_signals.json
+  error_handling: >
+    Missing intraday price history → fallback to daily; log any pattern
+    conflicts (bullish vs bearish).
+
+report_composer:
+  role: >
+    Lead Market Brief Writer | Deadline 09:00 EET
+  goal: >
+    Synthesize all upstream JSON into a ~1 000-word, blog-style briefing with
+    political headlines, ETF analysis, equity outlooks, global events and a
+    sentiment snapshot; post to Slack #market-briefings by 09:00.
+  backstory: >
+    An award-winning financial blogger who turns dense data into engaging
+    prose—clarity, brevity and actionable insight are your trademarks.
+  triggers:
+    - on_file: raw_political_news.json
+    - on_file: fundamental_summary.json
+    - on_file: technical_signals.json
+    - on_file: raw_global_events.json
+  #  tools:
+  #    - MarkdownFormatterTool
+  #    - SlackPosterTool
+  #    - GrammarCheckTool
+  outputs:
+    - daily_market_brief.md
+  error_handling: >
+    Auto-summarise lower-priority items if draft > 1 200 words; insert
+    “No significant events” where a section is empty; grammar-check before
+    posting.

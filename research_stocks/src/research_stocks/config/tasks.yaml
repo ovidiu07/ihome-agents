@@ -1,0 +1,49 @@
+harvest_data:
+  description: >
+    Fetch, deduplicate and tag all required inputs (political news, ETF data,
+    equity fundamentals, global macro events, sentiment) for the current
+    trading day. Save the structured artefacts exactly as:
+      • raw_political_news.json
+      • raw_etf_data.json
+      • raw_equity_fundamentals.json
+      • raw_global_events.json
+      • raw_sentiment.json
+  expected_output: >
+    Confirmation that the five JSON files above were written successfully.
+  agent: data_harvester_agent
+
+fundamental_analysis:
+  description: >
+    Compute valuation metrics (P/E, EV/EBITDA, PEG, P/B, dividend yield),
+    benchmark against 1‑year and 5‑year medians plus sector peers, detect
+    catalysts (earnings beats/misses, guidance changes, M&A). Estimate
+    intraday price drift and output fundamental_summary.json.
+  expected_output: >
+    fundamental_summary.json with an array of objects holding symbol,
+    fundamentals, predicted_trend, confidence and rationale.
+  agent: valuation_engine_agent
+
+technical_analysis:
+  description: >
+    Perform pattern and indicator scan on OHLC price history for each symbol
+    (1m, 5m, 15m, 1h, daily). Detect patterns (double top/bottom, head &
+    shoulders, flags, triangles) and indicator events (RSI, MACD, Bollinger,
+    ATR). Adjust fundamental trends accordingly and emit
+    technical_signals.json.
+  expected_output: >
+    technical_signals.json containing symbol, detected patterns, indicators,
+    adjusted_trend and overall_signal_strength for each ticker.
+  agent: pattern_scanner_agent
+
+compose_report:
+  description: >
+    Generate the end‑of‑morning market briefing in clear, blog‑style
+    English. Include: (1) top political headlines; (2) ETF performance with
+    drivers; (3) intraday outlook for ~5 equities; (4) global macro / geo‑
+    political events; (5) sentiment & volatility snapshot. Format in
+    markdown with headings, bold tickers, and a timestamp footer. Save to
+    daily_market_brief.md and post to Slack #market‑briefings.
+  expected_output: >
+    daily_market_brief.md file path and Slack message ID confirming post.
+  output_file: daily_market_brief.md
+  agent: report_composer_agent
