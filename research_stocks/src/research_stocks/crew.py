@@ -4,7 +4,7 @@ from crewai_tools import WebsiteSearchTool, ScrapeWebsiteTool, TXTSearchTool
 from dotenv import load_dotenv
 from typing import List
 from functools import lru_cache
-import agentops
+#import agentops
 import os
 from tools.market_data_tools import (PoliticalNewsTool, ETFDataTool,
                                      EquityFundamentalsTool,
@@ -40,11 +40,11 @@ def get_appropriate_llm(task_complexity: str) -> LLM:
         return analysis_llm
     return report_llm
 
-AGENTOPS_API_KEY = os.getenv("AGENTOPS_API_KEY") or 'cd414e33-e4a2-44ec-a71f-b30360462ee8'
-agentops.init(
-    api_key=AGENTOPS_API_KEY,
-    default_tags=['crewai']
-)
+# AGENTOPS_API_KEY = os.getenv("AGENTOPS_API_KEY") or 'cd414e33-e4a2-44ec-a71f-b30360462ee8'
+# agentops.init(
+#     api_key=AGENTOPS_API_KEY,
+#     default_tags=['crewai']
+# )
 @CrewBase
 class StockAnalysisCrew:
     agents_config = 'config/agents.yaml'
@@ -66,7 +66,7 @@ class StockAnalysisCrew:
     def data_harvester_agent(self) -> Agent:
         return Agent(config=self.agents_config['data_harvester'], verbose=True,
                      llm=get_appropriate_llm("low"), tools=[PoliticalNewsTool(), ETFDataTool(),
-                                     EquityFundamentalsTool(), GlobalEventsTool(),
+                                     EquityFundamentalsTool(),
                                      SentimentScanTool(), ])
 
     @task
