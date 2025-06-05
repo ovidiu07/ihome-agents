@@ -23,7 +23,7 @@ def safe_run():
         return run()
     except Exception as e:
         logging.error(f"Critical error in crew execution: {e}")
-        send_alert_to_slack("#market-ops", f"Crew execution failed: {e}")
+        # send_alert_to_slack("#market-ops", f"Crew execution failed: {e}")
         return generate_fallback_report()
 
 def train():

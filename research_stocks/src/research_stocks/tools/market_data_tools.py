@@ -252,13 +252,13 @@ class GrammarCheckTool(BaseTool):
     from openai import OpenAI
     client = OpenAI()
     resp = client.chat.completions.create(
-        model="openai/gpt-4",
+        model="openai/gpt-3.5-turbo",
         messages=[{"role": "system", "content": "fix grammar"}, {"role": "user", "content": text}],
         temperature=0.2,
         max_tokens= len(text)//3
     )
     usage = resp.usage
-    track_token_usage("openai/gpt-4", usage.prompt_tokens, usage.completion_tokens)
+    track_token_usage("openai/gpt-3.5-turbo", usage.prompt_tokens, usage.completion_tokens)
     return resp.choices[0].message.content
 
 

@@ -7,7 +7,7 @@ from functools import lru_cache
 import agentops
 import os
 from tools.market_data_tools import (PoliticalNewsTool, ETFDataTool,
-                                     EquityFundamentalsTool, GlobalEventsTool,
+                                     EquityFundamentalsTool,
                                      SentimentScanTool, FundamentalMathTool,
                                      HistoricalFinancialsTool, MarketPriceTool,
                                      TALibTool, MarkdownFormatterTool,
