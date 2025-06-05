@@ -3,7 +3,9 @@ from crewai.project import CrewBase, agent, crew, task
 from crewai_tools import WebsiteSearchTool, ScrapeWebsiteTool, TXTSearchTool
 from dotenv import load_dotenv
 from typing import List
+from functools import lru_cache
 import agentops
+import os
 from tools.market_data_tools import (PoliticalNewsTool, ETFDataTool,
                                      EquityFundamentalsTool, GlobalEventsTool,
                                      SentimentScanTool, FundamentalMathTool,
@@ -15,10 +17,20 @@ load_dotenv()
 
 from crewai import LLM
 
-llm = LLM(model="openai/gpt-4",  # call model by provider/model_name
-          temperature=0.8, max_tokens=2048, top_p=0.9, frequency_penalty=0.1,
-          presence_penalty=0.1,  # stop=["END"],
-          seed=42)
+# Use cheaper model for data gathering / valuation to cut costs
+cheap_llm = LLM(model="openai/gpt-3.5-turbo",
+                temperature=0.7, max_tokens=512, top_p=0.9,
+                frequency_penalty=0.1, presence_penalty=0.1, seed=42)
+
+# Higher-quality model for analysis tasks but with a lower token limit
+analysis_llm = LLM(model="openai/gpt-4",
+                   temperature=0.7, max_tokens=1024, top_p=0.9,
+                   frequency_penalty=0.1, presence_penalty=0.1, seed=42)
+
+# Full GPT‑4 model reserved for composing the final report
+report_llm = LLM(model="openai/gpt-4",
+                 temperature=0.8, max_tokens=2048, top_p=0.9,
+                 frequency_penalty=0.1, presence_penalty=0.1, seed=42)
 
 AGENTOPS_API_KEY = os.getenv("AGENTOPS_API_KEY") or 'cd414e33-e4a2-44ec-a71f-b30360462ee8'
 agentops.init(
@@ -34,16 +46,18 @@ class StockAnalysisCrew:
     # Helper accessors for the ETF and equity watch‑lists declared in    #
     # config/agents.yaml under data_harvester.etf_watchlist / equity_…   #
     # ------------------------------------------------------------------ #
+    @lru_cache(maxsize=1)
     def etf_watchlist(self) -> list[str]:
         return self.agents_config["data_harvester"]["etf_watchlist"]
 
+    @lru_cache(maxsize=1)
     def equity_watchlist(self) -> list[str]:
         return self.agents_config["data_harvester"]["equity_watchlist"]
 
     @agent
     def data_harvester_agent(self) -> Agent:
         return Agent(config=self.agents_config['data_harvester'], verbose=True,
-                     llm=llm, tools=[PoliticalNewsTool(), ETFDataTool(),
+                     llm=cheap_llm, tools=[PoliticalNewsTool(), ETFDataTool(),
                                      EquityFundamentalsTool(), GlobalEventsTool(),
                                      SentimentScanTool(), ])
 
@@ -62,7 +76,7 @@ class StockAnalysisCrew:
     @agent
     def valuation_engine_agent(self) -> Agent:
         return Agent(config=self.agents_config['valuation_engine'], verbose=True,
-                     llm=llm,
+                     llm=cheap_llm,
                      tools=[FundamentalMathTool(), HistoricalFinancialsTool(), ])
 
     @task
@@ -79,7 +93,7 @@ class StockAnalysisCrew:
     @agent
     def pattern_scanner_agent(self) -> Agent:
         return Agent(config=self.agents_config['pattern_scanner'], verbose=True,
-                     llm=llm,
+                     llm=analysis_llm,
                      tools=[MarketPriceTool(), TALibTool(), WebsiteSearchTool(), ])
 
     @task
@@ -96,7 +110,7 @@ class StockAnalysisCrew:
     @agent
     def report_composer_agent(self) -> Agent:
         return Agent(config=self.agents_config['report_composer'], verbose=True,
-                     llm=llm, tools=[MarkdownFormatterTool(),
+                     llm=report_llm, tools=[MarkdownFormatterTool(),
                                      GrammarCheckTool(), ScrapeWebsiteTool(),
                                      WebsiteSearchTool(), ])
 

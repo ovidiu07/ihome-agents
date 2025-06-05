@@ -1,7 +1,17 @@
 # src/tools/market_data_tools.py
-import os, requests, datetime, json
+import os, requests, datetime, json, hashlib
+from pathlib import Path
 from crewai.tools import BaseTool
 from crewai.tools.base_tool import BaseTool
+
+CACHE_DIR = os.getenv("CACHE_DIR")
+
+def _get_cache_path(name: str, key: str) -> Path | None:
+  if not CACHE_DIR:
+    return None
+  path = Path(CACHE_DIR)
+  path.mkdir(parents=True, exist_ok=True)
+  return path / f"{name}_{key}.json"
 
 # ------------- DATA HARVESTER TOOLS ----------------------------------- #
 
@@ -18,7 +28,16 @@ class PoliticalNewsTool(BaseTool):
       f"?q={query}&from={days_back}d&sortBy=publishedAt&pageSize=100"
       f"&apiKey={api_key}"
     )
-    return requests.get(url, timeout=20).json()["articles"]
+    cache_key = hashlib.sha1(url.encode()).hexdigest()[:8]
+    cache_path = _get_cache_path(self.name, cache_key)
+    if cache_path and cache_path.exists():
+      with open(cache_path) as f:
+        return json.load(f)
+    data = requests.get(url, timeout=20).json()["articles"]
+    if cache_path:
+      with open(cache_path, "w") as f:
+        json.dump(data, f)
+    return data
 
 
 class ETFDataTool(BaseTool):
@@ -31,7 +50,16 @@ class ETFDataTool(BaseTool):
     out = {}
     for sym in symbols:
       url = f"https://api.polygon.io/v2/aggs/ticker/{sym}/prev?apiKey={key}"
+      cache_key = hashlib.sha1(url.encode()).hexdigest()[:8]
+      cache_path = _get_cache_path(self.name, f"{sym}_{cache_key}")
+      if cache_path and cache_path.exists():
+        with open(cache_path) as f:
+          out[sym] = json.load(f)
+          continue
       out[sym] = requests.get(url, timeout=10).json()["results"][0]
+      if cache_path:
+        with open(cache_path, "w") as f:
+          json.dump(out[sym], f)
     return out
 
 
@@ -45,7 +73,16 @@ class EquityFundamentalsTool(BaseTool):
       "https://www.alphavantage.co/query"
       f"?function=EARNINGS&symbol={ticker}&apikey={key}"
     )
-    data = requests.get(url, timeout=15).json()
+    cache_key = hashlib.sha1(url.encode()).hexdigest()[:8]
+    cache_path = _get_cache_path(self.name, cache_key)
+    if cache_path and cache_path.exists():
+      with open(cache_path) as f:
+        data = json.load(f)
+    else:
+      data = requests.get(url, timeout=15).json()
+      if cache_path:
+        with open(cache_path, "w") as f:
+          json.dump(data, f)
     return data.get("annualEarnings", [])[:1]  # most recent year
 
 
@@ -107,7 +144,16 @@ class MarketPriceTool(BaseTool):
       f"https://api.polygon.io/v2/aggs/ticker/{ticker}"
       f"/range/1/day/{start}/{end}?apiKey={key}&adjusted=true&sort=asc"
     )
-    return requests.get(url, timeout=15).json()["results"]
+    cache_key = hashlib.sha1(url.encode()).hexdigest()[:8]
+    cache_path = _get_cache_path(self.name, cache_key)
+    if cache_path and cache_path.exists():
+      with open(cache_path) as f:
+        return json.load(f)
+    data = requests.get(url, timeout=15).json()["results"]
+    if cache_path:
+      with open(cache_path, "w") as f:
+        json.dump(data, f)
+    return data
 
 
 class TALibTool(BaseTool):
