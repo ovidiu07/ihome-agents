@@ -21,23 +21,7 @@ data_harvester:
     - SPY   # S&P 500
     - QQQ   # Nasdaq‑100
     - IVV   # Core S&P 500 (iShares)
-    - VTI   # Total US Market
-    - VOO   # Vanguard S&P 500
-    - DIA   # Dow 30
-    - IWM   # Russell 2000
-    - EEM   # Emerging Markets (iShares)
-    - IEMG  # Core Emerging Mkts
-    - XLK   # Technology Select
-    - XLF   # Financials Select
-    - XLV   # Health Care Select
-    - XLE   # Energy Select
-    - XLY   # Consumer Discretionary
-    - XLI   # Industrials Select
-    - VNQ   # US Real‑Estate REITs
-    - TLT   # 20+ Yr Treasury Bond
-    - LQD   # Investment‑Grade Corp Bond
-    - HYG   # High‑Yield Corp Bond
-    - ARKK  # ARK Innovation (thematic growth)
+
   schedule: "CRON: 0 7 * * 1-5"        # 07:00 Mon–Fri Bucharest
   triggers:
     - slack:/harvest-now
