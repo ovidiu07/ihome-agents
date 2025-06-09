@@ -1,10 +1,6 @@
 # ---------------------------------------------------------------------------
 # CrewAI Agent Configuration – Daily Market Briefing (Europe/Bucharest)
 # ---------------------------------------------------------------------------
-# Four specialised agents aligned with your briefing spec.  Extra keys
-# (schedule, triggers, outputs, error_handling) are advisory metadata; CrewAI
-# ignores unknown fields.
-# ---------------------------------------------------------------------------
 
 data_harvester:
   role: >
@@ -16,21 +12,35 @@ data_harvester:
   backstory: >
     A Reuters-trained data journalist with backend chops who never misses a
     datapoint and labels each item with an accurate market-impact score.
-  # ETF universe (top 20 by AUM / liquidity as of 2025 – cross‑sector mix)
-  etf_watchlist:
-    - SPY   # S&P 500
-    - QQQ   # Nasdaq‑100
-    - IVV   # Core S&P 500 (iShares)
 
-  schedule: "CRON: 0 7 * * 1-5"        # 07:00 Mon–Fri Bucharest
+  inputs:
+    etf_watchlist:
+      - SPY   # S&P 500
+      - QQQ   # Nasdaq‑100
+      - IVV   # Core S&P 500 (iShares)
+    equity_watchlist:
+      - NVDA   # NVIDIA
+      - TSLA   # Tesla
+      - AAPL   # Apple
+      - MSFT   # Microsoft
+      - AMZN   # Amazon
+      - META   # Meta Platforms
+      - GOOGL  # Alphabet‑Class A
+      - BRK.B  # Berkshire Hathaway‑B
+      - JPM    # JPMorgan Chase
+      - UNH    # UnitedHealth
+      - XOM    # Exxon Mobil
+      - NFLX   # Netflix
+
+  schedule: "CRON: 0 7 * * 1-5"  # 07:00 Mon–Fri Bucharest
   triggers:
     - slack:/harvest-now
-  #  tools:
-  #    - PoliticalNewsTool
-  #    - ETFDataTool
-  #    - EquityFundamentalsTool
-  #    - GlobalEventsTool
-  #    - SentimentScanTool
+  tools:
+    - PoliticalNewsTool
+    - ETFDataTool
+    - EquityFundamentalsTool
+    - GlobalEventsTool
+    - SentimentScanTool
   outputs:
     - raw_political_news.json
     - raw_etf_data.json
@@ -40,21 +50,6 @@ data_harvester:
   error_handling: >
     Retry each API up to 3× with exponential back-off; on final failure send
     Slack alert #market-ops.
-
-  # High‑liquidity large‑cap equities to track intraday (2025 watch‑list)
-  equity_watchlist:
-    - NVDA   # NVIDIA
-    - TSLA   # Tesla
-    - AAPL   # Apple
-    - MSFT   # Microsoft
-    - AMZN   # Amazon
-    - META   # Meta Platforms
-    - GOOGL  # Alphabet‑Class A
-    - BRK.B  # Berkshire Hathaway‑B
-    - JPM    # JPMorgan Chase
-    - UNH    # UnitedHealth
-    - XOM    # Exxon Mobil
-    - NFLX   # Netflix
 
 valuation_engine:
   role: >
@@ -68,9 +63,9 @@ valuation_engine:
   triggers:
     - on_file: raw_equity_fundamentals.json
     - on_file: raw_etf_data.json
-  #  tools:
-  #    - FundamentalMathTool
-  #    - HistoricalFinancialsTool
+  tools:
+    - FundamentalMathTool
+    - HistoricalFinancialsTool
   outputs:
     - fundamental_summary.json
   error_handling: >
@@ -88,11 +83,13 @@ pattern_scanner:
     most humans read a headline.
   triggers:
     - on_file: fundamental_summary.json
-  #  tools:
-  #    - MarketPriceTool
-  #    - TALibTool
+  tools:
+    - MarketPriceTool
+    - TALibTool
+    - ForecastSignalTool
   outputs:
     - technical_signals.json
+    - technical_signals.md
   error_handling: >
     Missing intraday price history → fallback to daily; log any pattern
     conflicts (bullish vs bearish).
@@ -112,12 +109,14 @@ report_composer:
     - on_file: fundamental_summary.json
     - on_file: technical_signals.json
     - on_file: raw_global_events.json
-  #  tools:
-  #    - MarkdownFormatterTool
-  #    - SlackPosterTool
-  #    - GrammarCheckTool
+  tools:
+    - MarkdownFormatterTool
+    - SlackPosterTool
+    - GrammarCheckTool
   outputs:
     - daily_market_brief.md
+    - sentiment_summary.md
+    - event_brief.md
   error_handling: >
     Auto-summarise lower-priority items if draft > 1 200 words; insert
     “No significant events” where a section is empty; grammar-check before
