@@ -43,9 +43,10 @@ def _request_with_retries(url: str, *, max_retries: int = 3,
       resp = requests.get(url, timeout=15)
       resp.raise_for_status()
       return resp.json()
-    except Exception:
+    except Exception as e:
       if attempt == max_retries - 1:
-        raise
+        raise RuntimeError(
+          f"Failed to fetch URL after {max_retries} attempts: {e}")
       time.sleep(delay)
       delay *= 2
 
@@ -74,29 +75,40 @@ def _get_cache_path(name: str, key: str, ttl: int | None = None) -> Path | None:
 
 
 # ------------- DATA HARVESTER TOOLS ----------------------------------- #
-
 class PoliticalNewsTool(BaseTool):
   name: str = "PoliticalNewsTool"
   description: str = "Fetch top political or macro headlines."
 
   def _run(self, query: str = "politics OR policy", days_back: int = 1):
+    import hashlib, json, os
+    from pathlib import Path
+
     api_key = os.getenv("NEWSAPI_KEY")
     if not api_key:
-      return {"error": "NEWSAPI_KEY not set"}
-    url = ("https://newsapi.org/v2/everything"
+      raise ValueError("Missing NEWSAPI_KEY for PoliticalNewsTool")
+
+    url = (f"https://newsapi.org/v2/everything"
            f"?q={query}&from={days_back}d&sortBy=publishedAt&pageSize=100"
            f"&apiKey={api_key}")
+
     cache_key = hashlib.sha1(url.encode()).hexdigest()[:8]
     cache_path = _get_cache_path(self.name, cache_key, ttl=3600)
+
     if cache_path and cache_path.exists():
       with open(cache_path) as f:
         return json.load(f)
-    data = _request_with_retries(url, rate_limiter=RateLimiter(1)).get(
-        "articles", [])
+
+    try:
+      data = _request_with_retries(url, rate_limiter=RateLimiter(1))
+      articles = data.get("articles", [])
+    except Exception as e:
+      raise RuntimeError(f"Failed to fetch political news: {str(e)}")
+
     if cache_path:
       with open(cache_path, "w") as f:
-        json.dump(data, f)
-    return data
+        json.dump(articles, f)
+
+    return articles
 
 
 class ETFDataTool(BaseTool):
@@ -455,7 +467,8 @@ class MarketPriceTool(BaseTool):
   def _run(self, ticker: str, days: int = 20):
     import hashlib, json, os, datetime
     from pathlib import Path
-
+    if not ticker or not isinstance(ticker, str):
+      return {"error": "Invalid or missing ticker symbol"}
     key = os.getenv("POLYGON_KEY")
     if not key:
       return {"error": "POLYGON_KEY not set"}
@@ -479,7 +492,8 @@ class MarketPriceTool(BaseTool):
 
     results = raw.get("results")
     if not results:
-      return {"error": f"No price data returned for {ticker}"}
+      return {"ticker": ticker, "ohlc": [],
+        "error": f"No price data returned for {ticker}"}
 
     ohlc_series = []
     for item in results:

@@ -1,10 +1,12 @@
 # import agentops
 import os
+import yaml
 from crewai import Agent, Crew, Process, Task
 from crewai.project import CrewBase, agent, crew, task
 from crewai_tools import WebsiteSearchTool, ScrapeWebsiteTool, TXTSearchTool
 from dotenv import load_dotenv
 from functools import lru_cache
+from pathlib import Path
 from typing import List
 
 from tools.market_data_tools import (PoliticalNewsTool, ETFDataTool,
@@ -12,7 +14,8 @@ from tools.market_data_tools import (PoliticalNewsTool, ETFDataTool,
                                      FundamentalMathTool,
                                      HistoricalFinancialsTool, MarketPriceTool,
                                      GlobalEventsTool, MarkdownFormatterTool,
-                                     SlackPosterTool, GrammarCheckTool)
+                                     SlackPosterTool, GrammarCheckTool,
+                                     ForecastSignalTool)
 
 load_dotenv()
 
@@ -51,59 +54,83 @@ class StockAnalysisCrew:
   agents_config = 'config/agents.yaml'
   tasks_config = 'config/tasks.yaml'
 
+  @lru_cache(maxsize=1)
+  def agents_yaml(self) -> dict:
+    if isinstance(self.agents_config, dict):  # Avoid re-parsing
+      return self.agents_config
+    with open(Path(self.agents_config), "r") as f:
+      return yaml.safe_load(f)
+
+  @lru_cache(maxsize=1)
+  def tasks_yaml(self) -> dict:
+    if isinstance(self.tasks_config, dict):  # Avoid re-parsing
+      return self.tasks_config
+    with open(Path(self.tasks_config), "r") as f:
+      return yaml.safe_load(f)
+
   # ------------------------------------------------------------------ #
   # Helper accessors for the ETF and equity watch‑lists declared in    #
   # config/agents.yaml under data_harvester.etf_watchlist / equity_…   #
   # ------------------------------------------------------------------ #
   @lru_cache(maxsize=1)
   def etf_watchlist(self) -> list[str]:
-    return self.agents_config["data_harvester"]["etf_watchlist"]
+    return self.agents_yaml()["data_harvester"]["inputs"]["etf_watchlist"]
 
   @lru_cache(maxsize=1)
   def equity_watchlist(self) -> list[str]:
-    return self.agents_config["data_harvester"]["equity_watchlist"]
+    return self.agents_yaml()["data_harvester"]["inputs"]["equity_watchlist"]
 
   @agent
   def data_harvester_agent(self) -> Agent:
-    return Agent(config=self.agents_config['data_harvester'], verbose=True,
-        llm=get_appropriate_llm("low"),
-        tools=[PoliticalNewsTool(), ETFDataTool(), EquityFundamentalsTool(),
-          SentimentScanTool(), GlobalEventsTool(),
-          # 🆕 Adds upcoming market-moving events
-        ])
+    return Agent(config=self.agents_yaml()["data_harvester"], verbose=True,
+                 llm=get_appropriate_llm("low"),
+                 tools=[PoliticalNewsTool(), ETFDataTool(),
+                        EquityFundamentalsTool(), SentimentScanTool(),
+                        GlobalEventsTool(),
+                        # 🆕 Adds upcoming market-moving events
+                        ])
 
   @task
   def harvest_data(self) -> Task:
     # pass ticker lists into the task so the prompt variables can expand
-    return Task(config=self.tasks_config["harvest_data"],
-        agent=self.data_harvester_agent(),
-        input={"etf_symbols": ", ".join(self.etf_watchlist()),
-          "equity_symbols": ", ".join(self.equity_watchlist()), }, )
+    return Task(config=self.tasks_yaml()["harvest_data"],
+                agent=self.data_harvester_agent(),
+                input={"etf_symbols": ", ".join(self.etf_watchlist()),
+                       "equity_symbols": ", ".join(self.equity_watchlist()),
+                       "query": (
+                         "((interest rates OR inflation OR recession OR central bank OR Fed OR ECB OR bond yields) "
+                         "OR (tech stocks OR semiconductor OR AI OR electric vehicles OR oil prices OR energy policy OR healthcare regulation)) "
+                         "AND (NVIDIA OR Tesla OR Apple OR Microsoft OR Amazon OR Meta OR Alphabet OR Netflix OR JPMorgan OR Berkshire OR Exxon OR UnitedHealth)"),
+                       "days_back": 2 }, )
 
   @agent
   def valuation_engine_agent(self) -> Agent:
-    return Agent(config=self.agents_config['valuation_engine'], verbose=True,
-        llm=get_appropriate_llm("low"), tools=[FundamentalMathTool(),
-          # Computes P/E, EV/EBITDA, valuation insights
-          HistoricalFinancialsTool(),  # Provides 3-year EPS data
-          EquityFundamentalsTool(),  # Adds current EPS, partial revenue
-          ETFDataTool(),  # Supports price, shares outstanding
-        ])
+    return Agent(config=self.agents_yaml()["valuation_engine"], verbose=True,
+                 llm=get_appropriate_llm("low"), tools=[FundamentalMathTool(),
+                                                        # Computes P/E, EV/EBITDA, valuation insights
+                                                        HistoricalFinancialsTool(),
+                                                        # Provides 3-year EPS data
+                                                        EquityFundamentalsTool(),
+                                                        # Adds current EPS, partial revenue
+                                                        ETFDataTool(),
+                                                        # Supports price, shares outstanding
+                                                        ])
 
   @task
   def fundamental_analysis(self) -> Task:
-    return Task(config=self.tasks_config["fundamental_analysis"],
-        agent=self.valuation_engine_agent(),
-        input={"etf_symbols": ", ".join(self.etf_watchlist()),
-          "equity_symbols": ", ".join(self.equity_watchlist()), }, )
+    return Task(config=self.tasks_yaml()["fundamental_analysis"],
+                agent=self.valuation_engine_agent(),
+                input={"etf_symbols": ", ".join(self.etf_watchlist()),
+                       "equity_symbols": ", ".join(
+                           self.equity_watchlist()), }, )
 
   @agent
   def pattern_scanner_agent(self) -> Agent:
-    return Agent(config=self.agents_config['pattern_scanner'], verbose=True,
-        llm=get_appropriate_llm("medium"),
-        tools=[MarketPriceTool(), TALibTool(), ForecastSignalTool(),
-          # 🆕 Add technical-sentiment forecast logic
-        ])
+    return Agent(config=self.agents_yaml()["pattern_scanner"], verbose=True,
+                 llm=get_appropriate_llm("medium"),
+                 tools=[MarketPriceTool(), ForecastSignalTool(),
+                        # 🆕 Add technical-sentiment forecast logic
+                        ])
 
   @task
   def technical_analysis(self) -> Task:
@@ -111,20 +138,24 @@ class StockAnalysisCrew:
     Run technical analysis on all stocks and ETFs in the watchlists.
     This powers RSI, MACD and forecast logic via the pattern_scanner_agent.
     """
-    return Task(config=self.tasks_config["technical_analysis"],
-        agent=self.pattern_scanner_agent(),
-        input={"equity_symbols": ", ".join(self.equity_watchlist()),
-          "etf_symbols": ", ".join(self.etf_watchlist()),
-          # 🆕 Added for ETF analysis
-        }, )
+    print("Technical Analysis Inputs:")
+    print("  ETF Symbols:", self.etf_watchlist())
+    print("  Equity Symbols:", self.equity_watchlist())
+    return Task(config=self.tasks_yaml()["technical_analysis"],
+                agent=self.pattern_scanner_agent(),
+                input={"equity_symbols": ", ".join(self.equity_watchlist()),
+                       "etf_symbols": ", ".join(self.etf_watchlist()),
+                       # 🆕 Added for ETF analysis
+                       }, )
 
   @agent
   def report_composer_agent(self) -> Agent:
-    return Agent(config=self.agents_config['report_composer'], verbose=True,
-        llm=get_appropriate_llm("high"),
-        tools=[MarkdownFormatterTool(), GrammarCheckTool(), SlackPosterTool(),
-          # 🆕 Optional: send final report to Slack
-        ])
+    return Agent(config=self.agents_yaml()["report_composer"], verbose=True,
+                 llm=get_appropriate_llm("high"),
+                 tools=[MarkdownFormatterTool(), GrammarCheckTool(),
+                        SlackPosterTool(),
+                        # 🆕 Optional: send final report to Slack
+                        ])
 
   # -----------------------------
   # Helper to chunk lists
@@ -138,29 +169,40 @@ class StockAnalysisCrew:
     """First half of the watch‑lists."""
     etf_chunks = self._chunk(self.etf_watchlist(), 10)
     equity_chunks = self._chunk(self.equity_watchlist(), 6)
-    return Task(config=self.tasks_config["compose_report"],
-        agent=self.report_composer_agent(),
-        input={"etf_symbols": ", ".join(etf_chunks[0]),
-          "equity_symbols": ", ".join(equity_chunks[0]), }, )
+    return Task(config=self.tasks_yaml()["compose_report"],
+                agent=self.report_composer_agent(),
+                input={"etf_symbols": ", ".join(etf_chunks[0]),
+                       "equity_symbols": ", ".join(equity_chunks[0]), }, )
 
   @task
   def compose_report_part2(self) -> Task:
     """Second half – writes the final file, appending part‑1 output."""
     etf_chunks = self._chunk(self.etf_watchlist(), 10)
     equity_chunks = self._chunk(self.equity_watchlist(), 6)
-    return Task(config=self.tasks_config["compose_report_followup"],
-        agent=self.report_composer_agent(),
-        # append part‑1 context automatically via CrewAI memory
-        output_file="daily_market_brief.md", input={"etf_symbols": ", ".join(
-          etf_chunks[1] if len(etf_chunks) > 1 else []),
-          "equity_symbols": ", ".join(
-            equity_chunks[1] if len(equity_chunks) > 1 else []), }, )
+
+    if len(etf_chunks) < 2 and len(equity_chunks) < 2:
+      print(
+          "[Warning] Skipping compose_report_part2: Not enough tickers to split")
+      return None  # This will skip the task from being added
+
+    return Task(config=self.tasks_yaml()["compose_report_followup"],
+                agent=self.report_composer_agent(),
+                output_file="daily_market_brief.md", input={
+        "etf_symbols": ", ".join(etf_chunks[1] if len(etf_chunks) > 1 else []),
+        "equity_symbols": ", ".join(
+            equity_chunks[1] if len(equity_chunks) > 1 else []), })
 
   @crew
   def crew(self) -> Crew:
     """Creates the Market Briefing Crew"""
-    return Crew(agents=self.agents,
-        tasks=[self.harvest_data(), self.fundamental_analysis(),
-          self.technical_analysis(), self.compose_report_part1(),
-          self.compose_report_part2(),  # writes the file
-        ], process=Process.sequential, verbose=True, )
+    tasks = [self.harvest_data(), self.fundamental_analysis(),
+             self.technical_analysis(), self.compose_report_part1(), ]
+
+    compose_part2 = self.compose_report_part2()
+    if compose_part2:
+      tasks.append(compose_part2)
+
+    return Crew(
+        agents=[self.data_harvester_agent(), self.valuation_engine_agent(),
+                self.pattern_scanner_agent(), self.report_composer_agent()],
+        tasks=tasks, process=Process.sequential, verbose=True, )

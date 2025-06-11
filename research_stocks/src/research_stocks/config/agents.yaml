@@ -35,12 +35,12 @@ data_harvester:
   schedule: "CRON: 0 7 * * 1-5"  # 07:00 Mon–Fri Bucharest
   triggers:
     - slack:/harvest-now
-  tools:
-    - PoliticalNewsTool
-    - ETFDataTool
-    - EquityFundamentalsTool
-    - GlobalEventsTool
-    - SentimentScanTool
+#  tools:
+#    - PoliticalNewsTool
+#    - ETFDataTool
+#    - EquityFundamentalsTool
+#    - GlobalEventsTool
+#    - SentimentScanTool
   outputs:
     - raw_political_news.json
     - raw_etf_data.json
@@ -63,9 +63,9 @@ valuation_engine:
   triggers:
     - on_file: raw_equity_fundamentals.json
     - on_file: raw_etf_data.json
-  tools:
-    - FundamentalMathTool
-    - HistoricalFinancialsTool
+#  tools:
+#    - FundamentalMathTool
+#    - HistoricalFinancialsTool
   outputs:
     - fundamental_summary.json
   error_handling: >
@@ -83,10 +83,10 @@ pattern_scanner:
     most humans read a headline.
   triggers:
     - on_file: fundamental_summary.json
-  tools:
-    - MarketPriceTool
-    - TALibTool
-    - ForecastSignalTool
+#  tools:
+#    - MarketPriceTool
+#    - TALibTool
+#    - ForecastSignalTool
   outputs:
     - technical_signals.json
     - technical_signals.md
@@ -109,10 +109,10 @@ report_composer:
     - on_file: fundamental_summary.json
     - on_file: technical_signals.json
     - on_file: raw_global_events.json
-  tools:
-    - MarkdownFormatterTool
-    - SlackPosterTool
-    - GrammarCheckTool
+#  tools:
+#    - MarkdownFormatterTool
+#    - SlackPosterTool
+#    - GrammarCheckTool
   outputs:
     - daily_market_brief.md
     - sentiment_summary.md

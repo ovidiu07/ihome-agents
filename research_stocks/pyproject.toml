@@ -12,6 +12,8 @@ crewai = { extras = ["tools"], version = ">=0.121.1,<1.0.0" }
 python-dotenv = "^1.0.1"
 html2text = "^2024.2.26"
 sec-api = "^1.0.20"
+pyyaml = "^6.0.2"
+ta-lib = "^0.6.4"
 
 [tool.poetry.scripts]
 research_stocks = "research_stocks.main:run"

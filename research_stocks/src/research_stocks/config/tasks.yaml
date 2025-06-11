@@ -1,13 +1,14 @@
 harvest_data:
   description: >
-    Fetch, deduplicate and tag all required inputs (political news, ETF data,
-    equity fundamentals, global macro events, sentiment) for the current
-    trading day. Save the structured artefacts exactly as:
-      • raw_political_news.json
-      • raw_etf_data.json
-      • raw_equity_fundamentals.json
-      • raw_global_events.json
-      • raw_sentiment.json
+    Use PoliticalNewsTool with proper inputs:
+      • query (string): political or macro keyword string
+      • days_back (int): how far back to search (e.g., 2)
+    Do not pass dictionaries — only literal values like:
+      {"query": "inflation OR interest rates", "days_back": 2}
+
+    Symbols provided:
+      • ETFs: {etf_symbols}
+      • Equities: {equity_symbols}
   expected_output: >
     Confirmation that the five JSON files above were written successfully.
   agent: data_harvester_agent
@@ -18,6 +19,10 @@ fundamental_analysis:
     benchmark against 1‑year and 5‑year medians plus sector peers, detect
     catalysts (earnings beats/misses, guidance changes, M&A). Estimate
     intraday price drift and output fundamental_summary.json.
+    
+    Symbols provided:
+      • ETFs: {etf_symbols}
+      • Equities: {equity_symbols}
   expected_output: >
     fundamental_summary.json with an array of objects holding symbol,
     fundamentals, predicted_trend, confidence and rationale.
@@ -30,6 +35,10 @@ technical_analysis:
     shoulders, flags, triangles) and indicator events (RSI, MACD, Bollinger,
     ATR). Adjust fundamental trends accordingly and emit
     technical_signals.json.
+    
+    Symbols provided:
+      • ETFs: {etf_symbols}
+      • Equities: {equity_symbols}
   expected_output: >
     technical_signals.json containing symbol, detected patterns, indicators,
     adjusted_trend and overall_signal_strength for each ticker.
@@ -37,26 +46,41 @@ technical_analysis:
 
 compose_report:
   description: >
-    Generate the end‑of‑morning market briefing in clear, blog‑style
-    English. Include: (1) top political headlines; (2) ETF performance with
-    drivers; (3) intraday outlook for ~5 equities; (4) global macro / geo‑
-    political events; (5) sentiment & volatility snapshot. Format in
-    markdown with headings, bold tickers, and a timestamp footer. Save to
-    daily_market_brief.md and post to Slack #market‑briefings.
+    Generate the morning market briefing in blog‑style markdown. For each ticker
+    passed (ETF or equity), generate a section with:
+      • a heading: ## Equity Outlook - [symbol] or ## ETF Outlook - [symbol]
+      • fundamental summary
+      • technical indicator summary
+      • trend and rationale
+    
+    Format must be in markdown with headers and bolded tickers. Include
+    a timestamp footer and clear sections.
+
+    Symbols provided:
+      • ETFs: {etf_symbols}
+      • Equities: {equity_symbols}
   expected_output: >
-    daily_market_brief.md file path and Slack message ID confirming post.
+    A markdown-formatted report covering all input tickers, saved to
+    daily_market_brief.md. Include summary per symbol in structured sections.
   output_file: daily_market_brief.md
   agent: report_composer_agent
 
 compose_report_followup:
   description: >
-    Generate the end‑of‑morning market briefing in clear, blog‑style
-    English. Include: (1) top political headlines; (2) ETF performance with
-    drivers; (3) intraday outlook for ~5 equities; (4) global macro / geo‑
-    political events; (5) sentiment & volatility snapshot. Format in
-    markdown with headings, bold tickers, and a timestamp footer. Save to
-    daily_market_brief.md and post to Slack #market‑briefings.
+    Continue or complete the market briefing report with any remaining tickers
+    from the original list. Each section must follow the same structure:
+      • Heading per symbol
+      • Clear trend insight
+      • Confidence and rationale
+    
+    Append output to existing daily_market_brief.md. Use clear markdown
+    formatting and a timestamp footer.
+
+    Symbols provided:
+      • ETFs: {etf_symbols}
+      • Equities: {equity_symbols}
   expected_output: >
-    daily_market_brief.md file path and Slack message ID confirming post.
+    A markdown-formatted report covering all input tickers, saved to
+    daily_market_brief.md. Include summary per symbol in structured sections.
   output_file: daily_market_brief.md
   agent: report_composer_agent
