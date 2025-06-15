@@ -6,8 +6,8 @@ def run():
     inputs = {
         'query': 'What is the company you want to analyze?',
         'company_stock': 'NVDA',
-        "etf_symbols": "SPY, QQQ, IVV",
-        "equity_symbols": "NVDA, TSLA, AAPL, MSFT, AMZN, META, GOOGL, BRK.B, JPM, UNH, XOM, NFLX"
+        "etf_symbols": "SPY",
+        "equity_symbols": "NVDA"
     }
     return StockAnalysisCrew().crew().kickoff(inputs=inputs)
 

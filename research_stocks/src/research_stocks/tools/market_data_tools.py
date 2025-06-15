@@ -121,8 +121,7 @@ class ETFDataTool(BaseTool):
       symbols = [s.strip().upper() for s in symbols.split(",") if s.strip()]
 
     symbols = symbols or [
-      "SPY", "QQQ", "IVV", "NVDA", "TSLA", "AAPL", "MSFT", "AMZN",
-      "META", "GOOGL", "BRK.B", "JPM", "UNH", "XOM", "NFLX"
+      "SPY", "NVDA"
     ]
 
     key = os.getenv("POLYGON_KEY")
@@ -239,8 +238,7 @@ class GlobalEventsTool(BaseTool):
     from_str = today.isoformat()
     to_str = to_date.isoformat()
 
-    symbols = ["SPY", "QQQ", "IVV", "NVDA", "TSLA", "AAPL", "MSFT", "AMZN",
-               "META", "GOOGL", "BRK.B", "JPM", "UNH", "XOM", "NFLX"]
+    symbols = ["SPY", "NVDA"]
 
     macro_terms = ["FOMC", "Fed", "CPI", "inflation", "central bank",
                    "rate hike"]

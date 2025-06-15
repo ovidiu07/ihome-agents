@@ -163,40 +163,43 @@ class StockAnalysisCrew:
                         ])
 
   @task
-  def technical_analysis(self) -> Task:
-    """
-        Pre-format OHLC data before passing to the agent.
-        This powers RSI, MACD and forecast logic via the pattern_scanner_agent.
-        """
+  def technical_analysis(self) -> Task | None:
     print("Preparing technical analysis input...")
     print("Technical Analysis Inputs:")
     print("  ETF Symbols:", self.etf_watchlist())
     print("  Equity Symbols:", self.equity_watchlist())
+    
     watchlist = self.etf_watchlist() + self.equity_watchlist()
+    if not watchlist:  # Skip if watchlist is empty.
+        print("[Warning] Skipping technical_analysis: No tickers in watchlist.")
+        return None
 
     price_tool = MarketPriceTool()
     formatter = OHLCFormatterTool()
-
     summaries = []
 
     for symbol in watchlist:
-      try:
-        raw_ohlc = price_tool._run(ticker=symbol, days=20)
-        summary = formatter._run(ohlc_data=raw_ohlc, symbol=symbol, max_rows=5)
-        summaries.append(summary)
-      except Exception as e:
-        print(f"⚠️ Failed to fetch/format OHLC for {symbol}: {e}")
-        continue
+        try:
+            raw_ohlc = price_tool._run(ticker=symbol, days=20)
+            summary = formatter._run(ohlc_data=raw_ohlc, symbol=symbol, max_rows=5)
+            summaries.append(summary)
+        except Exception as e:
+            print(f"⚠️ Failed to fetch/format OHLC for {symbol}: {e}")
+            continue
 
     combined_summary = "\n\n".join(summaries)
+    if not combined_summary:  # Ensure valid input is passed downstream.
+        print("[Warning] Skipping technical_analysis: No formatted data available.")
+        return None
+
     print("  Combined summary:", combined_summary)
     return Task(
         config=self.tasks_yaml()["technical_analysis"],
         agent=self.pattern_scanner_agent(),
         input={
-          "etf_symbols": ", ".join(self.etf_watchlist()),
-          "equity_symbols": ", ".join(self.equity_watchlist()),
-          "formatted_ohlc_data": combined_summary  # ✅ inject formatted context
+            "etf_symbols": ", ".join(self.etf_watchlist()),
+            "equity_symbols": ", ".join(self.equity_watchlist()),
+            "formatted_ohlc_data": combined_summary,  # Valid default.
         },
     )
 
@@ -217,39 +220,77 @@ class StockAnalysisCrew:
     return [items[i:i + size] for i in range(0, len(items), size)]
 
   @task
-  def compose_report_part1(self) -> Task:
-    """First half of the watch‑lists."""
-    etf_chunks = self._chunk(self.etf_watchlist(), 10)
-    equity_chunks = self._chunk(self.equity_watchlist(), 6)
-    return Task(config=self.tasks_yaml()["compose_report"],
-                agent=self.report_composer_agent(),
-                input={"etf_symbols": ", ".join(etf_chunks[0]),
-                       "equity_symbols": ", ".join(equity_chunks[0]), }, )
+  def compose_report_part1(self) -> Task | None:
+    """First report part: Generate report sections for part 1 of symbols."""
+    etfs = self.etf_watchlist()
+    equities = self.equity_watchlist()
 
-  @task
+    # Skip task if both watchlists are empty.
+    if not etfs and not equities:
+        print("[Warning] Skipping compose_report_part1: No tickers available")
+        return None
+
+    # Create chunks only if needed or valid.
+    etf_part1 = self._chunk(etfs, 10)[0] if len(etfs) > 0 else []
+    equity_part1 = self._chunk(equities, 6)[0] if len(equities) > 0 else []
+
+    # Skip task if both chunks are empty.
+    if not etf_part1 and not equity_part1:
+        print("[Warning] compose_report_part1: No tickers in first chunk.")
+        return None
+
+    return Task(
+        config=self.tasks_yaml()["compose_report"],
+        agent=self.report_composer_agent(),
+        input={
+            "etf_symbols": ", ".join(etf_part1),
+            "equity_symbols": ", ".join(equity_part1),
+        },
+    )
+
+  # @task
   def compose_report_part2(self) -> Task | None:
-    """Second half – writes the final file, appending part‑1 output."""
-    etf_chunks = self._chunk(self.etf_watchlist(), 10)
-    equity_chunks = self._chunk(self.equity_watchlist(), 6)
+    """Second half of report: Handles remaining symbols not processed in part 1."""
+    etfs = self.etf_watchlist()
+    equities = self.equity_watchlist()
 
-    if len(etf_chunks) < 2 and len(equity_chunks) < 2:
-      print(
-          "[Warning] Skipping compose_report_part2: Not enough tickers to split")
-      return None  # This will skip the task from being added
+    # Skip task if both watchlists don't have enough tickers for a second chunk.
+    has_etf_part2 = len(etfs) > 10
+    has_equity_part2 = len(equities) > 6
+    if not has_etf_part2 and not has_equity_part2:
+        print("[Warning] Skipping compose_report_part2: Not enough tickers to split")
+        return None
 
-    return Task(config=self.tasks_yaml()["compose_report_followup"],
-                agent=self.report_composer_agent(),
-                output_file="daily_market_brief.md", input={
-        "etf_symbols": ", ".join(etf_chunks[1] if len(etf_chunks) > 1 else []),
-        "equity_symbols": ", ".join(
-            equity_chunks[1] if len(equity_chunks) > 1 else []), })
+    # Retrieve second chunks (safe with length check).
+    etf_part2 = self._chunk(etfs, 10)[1] if len(etfs) > 10 else []
+    equity_part2 = self._chunk(equities, 6)[1] if len(equities) > 6 else []
+
+    # Skip task if both parts are empty.
+    if not etf_part2 and not equity_part2:
+        print("[Warning] compose_report_part2: No tickers in second chunk.")
+        return None
+
+    return Task(
+        config=self.tasks_yaml()["compose_report_followup"],
+        agent=self.report_composer_agent(),
+        output_file="daily_market_brief.md",
+        input={
+            "etf_symbols": ", ".join(etf_part2),
+            "equity_symbols": ", ".join(equity_part2),
+        },
+    )
 
   @crew
   def crew(self) -> Crew:
     """Creates the Market Briefing Crew"""
     tasks = [self.harvest_data()]
     tasks.extend(self.fundamental_analysis_tasks())
-    tasks.extend([self.technical_analysis(), self.compose_report_part1()])
+    tech_task = self.technical_analysis()
+    part1_task = self.compose_report_part1()
+    if tech_task:
+      tasks.append(tech_task)
+    if part1_task:
+      tasks.append(part1_task)
 
     compose_part2 = self.compose_report_part2()
     if compose_part2 is not None:

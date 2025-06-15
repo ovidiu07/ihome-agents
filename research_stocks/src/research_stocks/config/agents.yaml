@@ -16,21 +16,21 @@ data_harvester:
   inputs:
     etf_watchlist:
       - SPY   # S&P 500
-      - QQQ   # Nasdaq‑100
-      - IVV   # Core S&P 500 (iShares)
+#      - QQQ   # Nasdaq‑100
+#      - IVV   # Core S&P 500 (iShares)
     equity_watchlist:
       - NVDA   # NVIDIA
-      - TSLA   # Tesla
-      - AAPL   # Apple
-      - MSFT   # Microsoft
-      - AMZN   # Amazon
-      - META   # Meta Platforms
-      - GOOGL  # Alphabet‑Class A
-      - BRK.B  # Berkshire Hathaway‑B
-      - JPM    # JPMorgan Chase
-      - UNH    # UnitedHealth
-      - XOM    # Exxon Mobil
-      - NFLX   # Netflix
+#      - TSLA   # Tesla
+#      - AAPL   # Apple
+#      - MSFT   # Microsoft
+#      - AMZN   # Amazon
+#      - META   # Meta Platforms
+#      - GOOGL  # Alphabet‑Class A
+#      - BRK.B  # Berkshire Hathaway‑B
+#      - JPM    # JPMorgan Chase
+#      - UNH    # UnitedHealth
+#      - XOM    # Exxon Mobil
+#      - NFLX   # Netflix
 
   schedule: "CRON: 0 7 * * 1-5"  # 07:00 Mon–Fri Bucharest
   triggers:
