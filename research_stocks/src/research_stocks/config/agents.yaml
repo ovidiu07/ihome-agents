@@ -35,12 +35,12 @@ data_harvester:
   schedule: "CRON: 0 7 * * 1-5"  # 07:00 Mon–Fri Bucharest
   triggers:
     - slack:/harvest-now
-#  tools:
-#    - PoliticalNewsTool
-#    - ETFDataTool
-#    - EquityFundamentalsTool
-#    - GlobalEventsTool
-#    - SentimentScanTool
+  #  tools:
+  #    - PoliticalNewsTool
+  #    - ETFDataTool
+  #    - EquityFundamentalsTool
+  #    - GlobalEventsTool
+  #    - SentimentScanTool
   outputs:
     - raw_political_news.json
     - raw_etf_data.json
@@ -63,9 +63,9 @@ valuation_engine:
   triggers:
     - on_file: raw_equity_fundamentals.json
     - on_file: raw_etf_data.json
-#  tools:
-#    - FundamentalMathTool
-#    - HistoricalFinancialsTool
+  #  tools:
+  #    - FundamentalMathTool
+  #    - HistoricalFinancialsTool
   outputs:
     - fundamental_summary.json
   error_handling: >
@@ -76,31 +76,34 @@ pattern_scanner:
   role: >
     Pattern & Indicator Scanner | Event-driven
   goal: >
-    Detect chart patterns, indicator cross-overs, reconcile signals with
-    fundamentals, and emit a unified strength score per symbol.
+    For each ETF and equity, detect relevant chart patterns and indicator
+    signals (RSI, MACD, Bollinger, etc.). Reconcile with fundamentals to assign
+    a directional trend and strength score. Output results per symbol with
+    no summarization across symbols.
   backstory: >
     An algo-trading wizard who recognises technical patterns faster than
     most humans read a headline.
   triggers:
     - on_file: fundamental_summary.json
-#  tools:
-#    - MarketPriceTool
-#    - TALibTool
-#    - ForecastSignalTool
+  #  tools:
+  #    - MarketPriceTool
+  #    - TALibTool
+  #    - ForecastSignalTool
   outputs:
     - technical_signals.json
     - technical_signals.md
   error_handling: >
-    Missing intraday price history → fallback to daily; log any pattern
-    conflicts (bullish vs bearish).
+    Missing intraday price history → fallback to daily. If no signals found,
+    still include symbol with “No pattern detected”. Never generalize or
+    summarize across tickers.
 
 report_composer:
   role: >
     Lead Market Brief Writer | Deadline 09:00 EET
   goal: >
-    Synthesize all upstream JSON into a ~1 000-word, blog-style briefing with
-    political headlines, ETF analysis, equity outlooks, global events and a
-    sentiment snapshot; post to Slack #market-briefings by 09:00.
+    Format raw inputs into a structured markdown report with clear sections
+    per ETF and equity. Include technical and fundamental summaries as-is
+    without condensing or rewriting content.
   backstory: >
     An award-winning financial blogger who turns dense data into engaging
     prose—clarity, brevity and actionable insight are your trademarks.
@@ -109,15 +112,14 @@ report_composer:
     - on_file: fundamental_summary.json
     - on_file: technical_signals.json
     - on_file: raw_global_events.json
-#  tools:
-#    - MarkdownFormatterTool
-#    - SlackPosterTool
-#    - GrammarCheckTool
+  #  tools:
+  #    - MarkdownFormatterTool
+  #    - SlackPosterTool
+  #    - GrammarCheckTool
   outputs:
     - daily_market_brief.md
     - sentiment_summary.md
     - event_brief.md
   error_handling: >
-    Auto-summarise lower-priority items if draft > 1 200 words; insert
-    “No significant events” where a section is empty; grammar-check before
-    posting.
+    If a section is empty, insert “No data available”. Avoid summarizing any
+    content; focus only on formatting and section completeness.

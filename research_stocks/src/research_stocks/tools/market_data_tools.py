@@ -116,14 +116,19 @@ class ETFDataTool(BaseTool):
   description: str = "Return daily metrics for a list of ETF and equity symbols."
 
   def _run(self, symbols: list[str] = None):
-    symbols = symbols or [  # ETFs
-      "SPY", "QQQ", "IVV",  # Equities
-      "NVDA", "TSLA", "AAPL", "MSFT", "AMZN", "META", "GOOGL", "BRK.B", "JPM",
-      "UNH", "XOM", "NFLX"]
+    # 🛠️ Normalize symbols input from LLM string to list
+    if isinstance(symbols, str):
+      symbols = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+
+    symbols = symbols or [
+      "SPY", "QQQ", "IVV", "NVDA", "TSLA", "AAPL", "MSFT", "AMZN",
+      "META", "GOOGL", "BRK.B", "JPM", "UNH", "XOM", "NFLX"
+    ]
 
     key = os.getenv("POLYGON_KEY")
     if not key:
       return {"error": "POLYGON_KEY not set"}
+
 
     out = {}
     symbols_str = ",".join(symbols)
@@ -467,8 +472,10 @@ class MarketPriceTool(BaseTool):
   def _run(self, ticker: str, days: int = 20):
     import hashlib, json, os, datetime
     from pathlib import Path
+
     if not ticker or not isinstance(ticker, str):
       return {"error": "Invalid or missing ticker symbol"}
+
     key = os.getenv("POLYGON_KEY")
     if not key:
       return {"error": "POLYGON_KEY not set"}
@@ -492,25 +499,34 @@ class MarketPriceTool(BaseTool):
 
     results = raw.get("results")
     if not results:
-      return {"ticker": ticker, "ohlc": [],
-        "error": f"No price data returned for {ticker}"}
+      return {
+        "ticker": ticker,
+        "ohlc": [],
+        "error": f"No price data returned for {ticker}"
+      }
 
     ohlc_series = []
     for item in results:
-      date = datetime.datetime.utcfromtimestamp(
-          item["t"] / 1000).date().isoformat()
-      ohlc_series.append(
-          {"date": date, "open": item["o"], "high": item["h"], "low": item["l"],
-           "close": item["c"], "volume": item["v"]})
+      date = datetime.datetime.utcfromtimestamp(item["t"] / 1000).date().isoformat()
+      ohlc_series.append({
+        "date": date,
+        "open": item["o"],
+        "high": item["h"],
+        "low": item["l"],
+        "close": item["c"],
+        "volume": item["v"]
+      })
 
-    # Optionally write a quick summary to markdown
+    # Write markdown summary with full OHLC
     md_path = Path(f"{ticker.upper()}_MarketPrice.md")
     with open(md_path, "w") as f:
       f.write(f"# Market Price Data for {ticker.upper()}\n")
-      f.write(f"_Date Range: {start} to {end}_\n\n")
+      f.write(f"Date Range: {start} to {end}\n\n")
       for entry in ohlc_series[-5:]:
         f.write(
-            f"- {entry['date']}: Close = {entry['close']} | Vol = {entry['volume']}\n")
+            f"{entry['date']}: O={entry['open']} H={entry['high']} "
+            f"L={entry['low']} C={entry['close']} | Vol={entry['volume']}\n"
+        )
 
     return ohlc_series
 

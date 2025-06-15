@@ -8,6 +8,8 @@ from dotenv import load_dotenv
 from functools import lru_cache
 from pathlib import Path
 from typing import List
+from tools.ohlc_formatter_tool import OHLCFormatterTool
+
 
 from tools.market_data_tools import (PoliticalNewsTool, ETFDataTool,
                                      EquityFundamentalsTool, SentimentScanTool,
@@ -22,7 +24,7 @@ load_dotenv()
 from crewai import LLM
 
 # Use cheaper model for data gathering / valuation to cut costs
-cheap_llm = LLM(model="openai/gpt-3.5-turbo", temperature=0.7, max_tokens=512,
+cheap_llm = LLM(model="openai/gpt-3.5-turbo", temperature=0.7, max_tokens=4096,
                 top_p=0.9, frequency_penalty=0.1, presence_penalty=0.1, seed=42)
 
 # Higher-quality model for analysis tasks but with a lower token limit
@@ -54,6 +56,31 @@ class StockAnalysisCrew:
   agents_config = 'config/agents.yaml'
   tasks_config = 'config/tasks.yaml'
 
+
+  def fundamental_analysis_tasks(self) -> list[Task]:
+    """Split fundamental analysis into smaller 2x2 batches to avoid LLM token limits."""
+    etf_chunks = self._chunk(self.etf_watchlist(), 2)
+    equity_chunks = self._chunk(self.equity_watchlist(), 2)
+
+    tasks = []
+    num_tasks = max(len(etf_chunks), len(equity_chunks))
+    for i in range(num_tasks):
+      etfs = etf_chunks[i] if i < len(etf_chunks) else []
+      equities = equity_chunks[i] if i < len(equity_chunks) else []
+
+      if not etfs and not equities:
+        continue  # Skip empty tasks
+
+      input_data = {
+        "etf_symbols": ", ".join(etfs),
+        "equity_symbols": ", ".join(equities)
+      }
+
+      tasks.append(Task(config=self.tasks_yaml()["fundamental_analysis"],
+                        agent=self.valuation_engine_agent(), input=input_data))
+
+    return tasks
+
   @lru_cache(maxsize=1)
   def agents_yaml(self) -> dict:
     if isinstance(self.agents_config, dict):  # Avoid re-parsing
@@ -84,10 +111,11 @@ class StockAnalysisCrew:
   def data_harvester_agent(self) -> Agent:
     return Agent(config=self.agents_yaml()["data_harvester"], verbose=True,
                  llm=get_appropriate_llm("low"),
-                 tools=[PoliticalNewsTool(), ETFDataTool(),
-                        EquityFundamentalsTool(), SentimentScanTool(),
+                 tools=[PoliticalNewsTool(),  # Correctly instantiated objects
+                        ETFDataTool(),
+                        EquityFundamentalsTool(),
+                        SentimentScanTool(),
                         GlobalEventsTool(),
-                        # 🆕 Adds upcoming market-moving events
                         ])
 
   @task
@@ -101,7 +129,7 @@ class StockAnalysisCrew:
                          "((interest rates OR inflation OR recession OR central bank OR Fed OR ECB OR bond yields) "
                          "OR (tech stocks OR semiconductor OR AI OR electric vehicles OR oil prices OR energy policy OR healthcare regulation)) "
                          "AND (NVIDIA OR Tesla OR Apple OR Microsoft OR Amazon OR Meta OR Alphabet OR Netflix OR JPMorgan OR Berkshire OR Exxon OR UnitedHealth)"),
-                       "days_back": 2 }, )
+                       "days_back": 2}, )
 
   @agent
   def valuation_engine_agent(self) -> Agent:
@@ -122,31 +150,55 @@ class StockAnalysisCrew:
                 agent=self.valuation_engine_agent(),
                 input={"etf_symbols": ", ".join(self.etf_watchlist()),
                        "equity_symbols": ", ".join(
-                           self.equity_watchlist()), }, )
+                           self.equity_watchlist()), },
+                verbose=True,)
 
   @agent
   def pattern_scanner_agent(self) -> Agent:
     return Agent(config=self.agents_yaml()["pattern_scanner"], verbose=True,
-                 llm=get_appropriate_llm("medium"),
+                 llm=get_appropriate_llm("low"),
                  tools=[MarketPriceTool(), ForecastSignalTool(),
+                        OHLCFormatterTool(),
                         # 🆕 Add technical-sentiment forecast logic
                         ])
 
   @task
   def technical_analysis(self) -> Task:
     """
-    Run technical analysis on all stocks and ETFs in the watchlists.
-    This powers RSI, MACD and forecast logic via the pattern_scanner_agent.
-    """
+        Pre-format OHLC data before passing to the agent.
+        This powers RSI, MACD and forecast logic via the pattern_scanner_agent.
+        """
+    print("Preparing technical analysis input...")
     print("Technical Analysis Inputs:")
     print("  ETF Symbols:", self.etf_watchlist())
     print("  Equity Symbols:", self.equity_watchlist())
-    return Task(config=self.tasks_yaml()["technical_analysis"],
-                agent=self.pattern_scanner_agent(),
-                input={"equity_symbols": ", ".join(self.equity_watchlist()),
-                       "etf_symbols": ", ".join(self.etf_watchlist()),
-                       # 🆕 Added for ETF analysis
-                       }, )
+    watchlist = self.etf_watchlist() + self.equity_watchlist()
+
+    price_tool = MarketPriceTool()
+    formatter = OHLCFormatterTool()
+
+    summaries = []
+
+    for symbol in watchlist:
+      try:
+        raw_ohlc = price_tool._run(ticker=symbol, days=20)
+        summary = formatter._run(ohlc_data=raw_ohlc, symbol=symbol, max_rows=5)
+        summaries.append(summary)
+      except Exception as e:
+        print(f"⚠️ Failed to fetch/format OHLC for {symbol}: {e}")
+        continue
+
+    combined_summary = "\n\n".join(summaries)
+    print("  Combined summary:", combined_summary)
+    return Task(
+        config=self.tasks_yaml()["technical_analysis"],
+        agent=self.pattern_scanner_agent(),
+        input={
+          "etf_symbols": ", ".join(self.etf_watchlist()),
+          "equity_symbols": ", ".join(self.equity_watchlist()),
+          "formatted_ohlc_data": combined_summary  # ✅ inject formatted context
+        },
+    )
 
   @agent
   def report_composer_agent(self) -> Agent:
@@ -175,7 +227,7 @@ class StockAnalysisCrew:
                        "equity_symbols": ", ".join(equity_chunks[0]), }, )
 
   @task
-  def compose_report_part2(self) -> Task:
+  def compose_report_part2(self) -> Task | None:
     """Second half – writes the final file, appending part‑1 output."""
     etf_chunks = self._chunk(self.etf_watchlist(), 10)
     equity_chunks = self._chunk(self.equity_watchlist(), 6)
@@ -195,11 +247,12 @@ class StockAnalysisCrew:
   @crew
   def crew(self) -> Crew:
     """Creates the Market Briefing Crew"""
-    tasks = [self.harvest_data(), self.fundamental_analysis(),
-             self.technical_analysis(), self.compose_report_part1(), ]
+    tasks = [self.harvest_data()]
+    tasks.extend(self.fundamental_analysis_tasks())
+    tasks.extend([self.technical_analysis(), self.compose_report_part1()])
 
     compose_part2 = self.compose_report_part2()
-    if compose_part2:
+    if compose_part2 is not None:
       tasks.append(compose_part2)
 
     return Crew(

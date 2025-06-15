@@ -15,10 +15,12 @@ harvest_data:
 
 fundamental_analysis:
   description: >
-    Compute valuation metrics (P/E, EV/EBITDA, PEG, P/B, dividend yield),
-    benchmark against 1‑year and 5‑year medians plus sector peers, detect
-    catalysts (earnings beats/misses, guidance changes, M&A). Estimate
-    intraday price drift and output fundamental_summary.json.
+    For each symbol provided, compute valuation metrics (P/E, EV/EBITDA, PEG,
+    P/B, dividend yield), benchmark against 1‑year and 5‑year medians and
+    sector peers. Detect catalysts such as earnings surprises or guidance changes.
+    Estimate intraday price drift individually.
+
+    DO NOT summarize across symbols — each must be processed separately.
     
     Symbols provided:
       • ETFs: {etf_symbols}
@@ -30,28 +32,36 @@ fundamental_analysis:
 
 technical_analysis:
   description: >
-    Perform pattern and indicator scan on OHLC price history for each symbol
-    (1m, 5m, 15m, 1h, daily). Detect patterns (double top/bottom, head &
-    shoulders, flags, triangles) and indicator events (RSI, MACD, Bollinger,
-    ATR). Adjust fundamental trends accordingly and emit
-    technical_signals.json.
-    
-    Symbols provided:
-      • ETFs: {etf_symbols}
-      • Equities: {equity_symbols}
+    Analyze the last 5 candles per symbol using the full OHLCV data.
+    For each entry, report:
+    - Date
+    - Open
+    - High
+    - Low
+    - Close
+    - Volume
+
+    Use this format per symbol:
+    SYMBOL_NAME (last 5 candles):
+    - DATE: O=X H=Y L=Z C=W Vol=V
+    ...
+
+    ---
+    {{ formatted_ohlc_data }}
   expected_output: >
-    technical_signals.json containing symbol, detected patterns, indicators,
-    adjusted_trend and overall_signal_strength for each ticker.
-  agent: pattern_scanner_agent
+    A report listing technical summary for each symbol using the last 5 days of OHLCV data.
+    Format as Markdown per symbol, and include comments on detected trends or patterns.
 
 compose_report:
   description: >
-    Generate the morning market briefing in blog‑style markdown. For each ticker
-    passed (ETF or equity), generate a section with:
+    For each ticker passed (ETF or equity), generate a dedicated markdown section with:
       • a heading: ## Equity Outlook - [symbol] or ## ETF Outlook - [symbol]
-      • fundamental summary
-      • technical indicator summary
-      • trend and rationale
+      • raw or lightly processed fundamental summary
+      • raw or lightly processed technical indicators
+      • final trend direction with confidence and rationale
+
+    Each symbol must be reported separately. Do NOT summarize across multiple tickers.
+    Avoid condensing sections or skipping data.
     
     Format must be in markdown with headers and bolded tickers. Include
     a timestamp footer and clear sections.
@@ -67,11 +77,14 @@ compose_report:
 
 compose_report_followup:
   description: >
-    Continue or complete the market briefing report with any remaining tickers
-    from the original list. Each section must follow the same structure:
+    Continue the market briefing by adding one section per remaining ticker.
+    Each section must include:
       • Heading per symbol
-      • Clear trend insight
+      • Technical + fundamental trend details
       • Confidence and rationale
+
+    Sections must be added independently. Do NOT group or summarize across tickers.
+    Maintain full structure and clarity.
     
     Append output to existing daily_market_brief.md. Use clear markdown
     formatting and a timestamp footer.
