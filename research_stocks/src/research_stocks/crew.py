@@ -180,7 +180,7 @@ class StockAnalysisCrew:
 
     for symbol in watchlist:
         try:
-            raw_ohlc = price_tool._run(ticker=symbol, days=20)
+            raw_ohlc = price_tool._run(ticker=symbol, days=60)
             summary = formatter._run(ohlc_data=raw_ohlc, symbol=symbol, max_rows=5)
             summaries.append(summary)
         except Exception as e:
