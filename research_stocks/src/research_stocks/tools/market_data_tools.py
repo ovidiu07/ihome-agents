@@ -13,7 +13,7 @@ from pathlib import Path
 
 CACHE_DIR = os.getenv("CACHE_DIR")
 load_dotenv()
-
+print(">>> Loading tools.market_data_tools  from:", __file__)
 
 def track_token_usage(model: str, prompt_tokens: int, completion_tokens: int):
   logging.info(
@@ -152,7 +152,26 @@ class ETFDataTool(BaseTool):
       symbol = ticker_data.get("ticker")
       out[symbol] = ticker_data
 
-    return out
+    wanted_fields = [
+      "ticker",
+      "todaysChangePerc", "todaysChange",
+      ("day", ["o", "h", "l", "c", "v"])   # open, high, low, close, vol
+    ]
+
+    out = {}
+    for td in data.get("tickers", []):
+      sym = td["ticker"]
+      day = td.get("day", {})
+      out[sym] = {
+        "open":   day.get("o"),
+        "high":   day.get("h"),
+        "low":    day.get("l"),
+        "close":  day.get("c"),
+        "volume": day.get("v"),
+        "chg_pct": td.get("todaysChangePerc"),
+      }
+    print(">>> Compact payload:", out)
+    return out            # tiny per-ticker dict ≈ 150 chars
 
 
 class EquityFundamentalsTool(BaseTool):
