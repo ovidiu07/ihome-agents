@@ -15,6 +15,7 @@ CACHE_DIR = os.getenv("CACHE_DIR")
 load_dotenv()
 print(">>> Loading tools.market_data_tools  from:", __file__)
 
+
 def track_token_usage(model: str, prompt_tokens: int, completion_tokens: int):
   logging.info(
       f"Token usage - Model: {model}, Prompt: {prompt_tokens}, Completion: {completion_tokens}")
@@ -46,7 +47,7 @@ def _request_with_retries(url: str, *, max_retries: int = 3,
     except Exception as e:
       if attempt == max_retries - 1:
         raise RuntimeError(
-          f"Failed to fetch URL after {max_retries} attempts: {e}")
+            f"Failed to fetch URL after {max_retries} attempts: {e}")
       time.sleep(delay)
       delay *= 2
 
@@ -115,29 +116,21 @@ class ETFDataTool(BaseTool):
   name: str = "ETFDataTool"
   description: str = "Return daily metrics for a list of ETF and equity symbols."
 
-  def _run(self, symbols: list[str] = None):
-    # 🛠️ Normalize symbols input from LLM string to list
+  def _run(self, symbols: list[str] | str = None):
+    # ── 1. normalise input ────────────────────────────────────────────
     if isinstance(symbols, str):
       symbols = [s.strip().upper() for s in symbols.split(",") if s.strip()]
-
-    symbols = symbols or [
-      "SPY", "NVDA"
-    ]
+    symbols = symbols or ["SPY", "NVDA"]
 
     key = os.getenv("POLYGON_KEY")
     if not key:
       return {"error": "POLYGON_KEY not set"}
 
-
-    out = {}
-    symbols_str = ",".join(symbols)
-
-    # ✅ Correct endpoint for batch data
+    # ── 2. fetch or read cache ───────────────────────────────────────
     url = ("https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/tickers"
-           f"?ticker.any_of={symbols_str}&apiKey={key}")
-
+           f"?ticker.any_of={','.join(symbols)}&apiKey={key}")
     cache_key = hashlib.sha1(url.encode()).hexdigest()[:8]
-    cache_path = _get_cache_path(self.name, cache_key, ttl=86400)
+    cache_path = _get_cache_path(self.name, cache_key, ttl=86_400)
 
     if cache_path and cache_path.exists():
       with open(cache_path) as f:
@@ -148,30 +141,20 @@ class ETFDataTool(BaseTool):
         with open(cache_path, "w") as f:
           json.dump(data, f)
 
-    for ticker_data in data.get("tickers", []):
-      symbol = ticker_data.get("ticker")
-      out[symbol] = ticker_data
-
-    wanted_fields = [
-      "ticker",
-      "todaysChangePerc", "todaysChange",
-      ("day", ["o", "h", "l", "c", "v"])   # open, high, low, close, vol
-    ]
-
-    out = {}
+    # ── 3. keep ONLY the requested tickers ───────────────────────────
+    compact = {}
     for td in data.get("tickers", []):
-      sym = td["ticker"]
+      sym = td.get("ticker")
+      if sym not in symbols:  # ← hard filter
+        continue
+
       day = td.get("day", {})
-      out[sym] = {
-        "open":   day.get("o"),
-        "high":   day.get("h"),
-        "low":    day.get("l"),
-        "close":  day.get("c"),
-        "volume": day.get("v"),
-        "chg_pct": td.get("todaysChangePerc"),
-      }
-    print(">>> Compact payload:", out)
-    return out            # tiny per-ticker dict ≈ 150 chars
+      compact[sym] = {"open": day.get("o"), "high": day.get("h"),
+        "low": day.get("l"), "close": day.get("c"), "volume": day.get("v"),
+        "chg_pct": td.get("todaysChangePerc"), }
+
+    print(">>> Compact payload:", compact)  # should list ONLY SPY & NVDA
+    return compact  # ≈150 chars per ticker, LLM-safe
 
 
 class EquityFundamentalsTool(BaseTool):
@@ -516,23 +499,16 @@ class MarketPriceTool(BaseTool):
 
     results = raw.get("results")
     if not results:
-      return {
-        "ticker": ticker,
-        "ohlc": [],
-        "error": f"No price data returned for {ticker}"
-      }
+      return {"ticker": ticker, "ohlc": [],
+              "error": f"No price data returned for {ticker}"}
 
     ohlc_series = []
     for item in results:
-      date = datetime.datetime.utcfromtimestamp(item["t"] / 1000).date().isoformat()
-      ohlc_series.append({
-        "date": date,
-        "open": item["o"],
-        "high": item["h"],
-        "low": item["l"],
-        "close": item["c"],
-        "volume": item["v"]
-      })
+      date = datetime.datetime.utcfromtimestamp(
+          item["t"] / 1000).date().isoformat()
+      ohlc_series.append(
+          {"date": date, "open": item["o"], "high": item["h"], "low": item["l"],
+           "close": item["c"], "volume": item["v"]})
 
     # Write markdown summary with full OHLC
     md_path = Path(f"{ticker.upper()}_MarketPrice.md")
@@ -540,10 +516,8 @@ class MarketPriceTool(BaseTool):
       f.write(f"# Market Price Data for {ticker.upper()}\n")
       f.write(f"Date Range: {start} to {end}\n\n")
       for entry in ohlc_series[-5:]:
-        f.write(
-            f"{entry['date']}: O={entry['open']} H={entry['high']} "
-            f"L={entry['low']} C={entry['close']} | Vol={entry['volume']}\n"
-        )
+        f.write(f"{entry['date']}: O={entry['open']} H={entry['high']} "
+                f"L={entry['low']} C={entry['close']} | Vol={entry['volume']}\n")
 
     return ohlc_series
 
@@ -697,15 +671,12 @@ class GrammarCheckTool(BaseTool):
   def _run(self, text: str):
     from openai import OpenAI
     client = OpenAI()
-    resp = client.chat.completions.create(model="openai/gpt-3.5-turbo",
-                                          messages=[{"role": "system",
-                                                     "content": "fix grammar"},
-                                                    {"role": "user",
-                                                     "content": text}],
-                                          temperature=0.2,
+    resp = client.chat.completions.create(model="gpt-3.5-turbo", messages=[
+      {"role": "system", "content": "fix grammar"},
+      {"role": "user", "content": text}], temperature=0.2,
                                           max_tokens=len(text) // 3)
     usage = resp.usage
-    track_token_usage("openai/gpt-3.5-turbo", usage.prompt_tokens,
+    track_token_usage("gpt-3.5-turbo", usage.prompt_tokens,
                       usage.completion_tokens)
     return resp.choices[0].message.content
 
