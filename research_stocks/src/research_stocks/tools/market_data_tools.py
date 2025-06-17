@@ -89,7 +89,7 @@ class PoliticalNewsTool(BaseTool):
       raise ValueError("Missing NEWSAPI_KEY for PoliticalNewsTool")
 
     url = (f"https://newsapi.org/v2/everything"
-           f"?q={query}&from={days_back}d&sortBy=publishedAt&pageSize=100"
+           f"?q={query}&from={days_back}d&sortBy=publishedAt&pageSize=20"
            f"&apiKey={api_key}")
 
     cache_key = hashlib.sha1(url.encode()).hexdigest()[:8]
@@ -102,6 +102,9 @@ class PoliticalNewsTool(BaseTool):
     try:
       data = _request_with_retries(url, rate_limiter=RateLimiter(1))
       articles = data.get("articles", [])
+      raw = json.dumps(articles)
+      if len(raw) > 10_000:
+        articles = json.loads(raw[:10_000])
     except Exception as e:
       raise RuntimeError(f"Failed to fetch political news: {str(e)}")
 
@@ -129,12 +132,17 @@ class ETFDataTool(BaseTool):
     # ── 2. fetch or read cache ───────────────────────────────────────
     url = ("https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/tickers"
            f"?ticker.any_of={','.join(symbols)}&apiKey={key}")
-    cache_key = hashlib.sha1(url.encode()).hexdigest()[:8]
+    cache_key = hashlib.sha1((url + ",".join(symbols)).encode()).hexdigest()[:8]
     cache_path = _get_cache_path(self.name, cache_key, ttl=86_400)
 
     if cache_path and cache_path.exists():
       with open(cache_path) as f:
         data = json.load(f)
+        # >>> NEW lines – keep ONLY the tickers we were asked for
+        data["tickers"] = [
+          t for t in data.get("tickers", [])
+          if t.get("ticker") in symbols
+        ]
     else:
       data = _request_with_retries(url, rate_limiter=RateLimiter(2))
       if cache_path:
@@ -514,10 +522,11 @@ class MarketPriceTool(BaseTool):
     md_path = Path(f"{ticker.upper()}_MarketPrice.md")
     with open(md_path, "w") as f:
       f.write(f"# Market Price Data for {ticker.upper()}\n")
-      f.write(f"Date Range: {start} to {end}\n\n")
+      f.write(f"_Date Range: {start} to {end}_\n\n")
+      f.write("| Date | Open | High | Low | Close | Volume |\n")
+      f.write("|------|------|------|-----|-------|--------|\n")
       for entry in ohlc_series[-5:]:
-        f.write(f"{entry['date']}: O={entry['open']} H={entry['high']} "
-                f"L={entry['low']} C={entry['close']} | Vol={entry['volume']}\n")
+        f.write(f"| {entry['date']} | {entry['open']} | {entry['high']} | {entry['low']} | {entry['close']} | {entry['volume']} |\n")
 
     return ohlc_series
 
@@ -527,7 +536,8 @@ class ForecastSignalTool(BaseTool):
   description: str = "Forecast today's price movement and provide signal with technical and sentiment overlay."
 
   def _run(self, ticker: str, close_prices: list[float], vix: float = None):
-    import numpy as np, talib, statistics
+    import numpy as np, talib, statistics, json
+    from pathlib import Path
 
     if len(close_prices) < 35:
       return {"error": "Need at least 35 close prices"}
@@ -539,11 +549,22 @@ class ForecastSignalTool(BaseTool):
     last_macd = macd[-1]
     last_macd_signal = macd_signal[-1]
 
-    forecast = {"ticker": ticker.upper(), "current_price": round(last_price, 2),
-                "rsi": round(rsi, 2), "macd": round(last_macd, 4),
-                "macd_signal": round(last_macd_signal, 4), }
+    # Build forecast dictionary
+    forecast = {
+      "ticker": ticker.upper(),
+      "current_price": round(last_price, 2),
+      "rsi": round(rsi, 2),
+      "macd": round(last_macd, 4),
+      "macd_signal": round(last_macd_signal, 4),
+    }
 
-    # Technical signal
+    # Calculate 1-day historical volatility and price estimates
+    volatility = round(statistics.stdev(close_prices[-10:]) / last_price * 100, 2)
+    forecast["expected_volatility_%"] = volatility
+    forecast["next_day_high"] = round(last_price * (1 + volatility / 100), 2)
+    forecast["next_day_low"] = round(last_price * (1 - volatility / 100), 2)
+
+    # Determine technical signal and set advice
     if rsi < 30:
       direction = "up"
       base_advice = "🟢 RSI indicates oversold. BUY signal."
@@ -560,81 +581,33 @@ class ForecastSignalTool(BaseTool):
     forecast["direction"] = direction
     forecast["base_advice"] = base_advice
 
-    # VIX interpretation
+    # Interpret VIX and refine the advice
     if vix is not None:
-      forecast["vix"] = vix
+      forecast["vix"] = round(vix, 1)
       if vix > 20:
         sentiment_note = "⚠️ VIX high: Market volatility may weaken signals."
       elif vix < 15:
         sentiment_note = "✅ VIX low: Signals are more reliable."
       else:
         sentiment_note = "⚠️ VIX moderate: Use caution."
-
       forecast["advice"] = f"{base_advice} {sentiment_note}"
     else:
       forecast["advice"] = base_advice
 
-    # Estimate volatility
-    volatility = round(statistics.stdev(close_prices[-10:]) / last_price * 100,
-                       2)
-    forecast["expected_volatility_%"] = volatility
-
+    # Adjust today's high/low estimates based on direction
     if direction == "up":
-      forecast["today_high_estimate"] = round(
-          last_price * (1 + volatility / 100), 2)
+      forecast["today_high_estimate"] = forecast["next_day_high"]
       forecast["today_low_estimate"] = round(last_price * 0.995, 2)
     else:
       forecast["today_high_estimate"] = round(last_price * 1.005, 2)
-      forecast["today_low_estimate"] = round(
-          last_price * (1 - volatility / 100), 2)
+      forecast["today_low_estimate"] = forecast["next_day_low"]
 
-    # Markdown report
-    with open(f"Forecast_{ticker.upper()}.md", "w") as f:
-      f.write(f"# {ticker.upper()} Forecast Signal\n")
-      f.write(f"- **Current Price**: ${forecast['current_price']}\n")
-      f.write(f"- **RSI (14)**: {forecast['rsi']}\n")
-      f.write(
-          f"- **MACD**: {forecast['macd']}, Signal: {forecast['macd_signal']}\n")
-      f.write(f"- **Expected Direction**: {forecast['direction'].upper()}\n")
-      f.write(f"- **Volatility Estimate**: {volatility}%\n")
-      f.write(f"- **Estimated High**: ${forecast['today_high_estimate']}\n")
-      f.write(f"- **Estimated Low**: ${forecast['today_low_estimate']}\n")
-      if vix is not None:
-        f.write(f"- **VIX**: {vix}\n")
-      f.write(f"- **Advice**: {forecast['advice']}\n")
+    # Save to JSON file for persistence
+    json_path = Path(f"{ticker.upper()}_forecast.json")
+    with open(json_path, "w") as jf:
+      json.dump(forecast, jf, indent=2)
 
     return forecast
-
-  @staticmethod
-  def run_batch_forecast(watchlist: list[str]):
-    from tools.market_data_tools import (SentimentScanTool, MarketPriceTool,
-                                         ForecastSignalTool)
-
-    sentiment_tool = SentimentScanTool()
-    price_tool = MarketPriceTool()
-    forecast_tool = ForecastSignalTool()
-
-    # Step 1: Get market sentiment (VIX)
-    vix_data = sentiment_tool._run()
-    vix = vix_data.get("vix") if isinstance(vix_data, dict) else None
-
-    # Step 2: Loop through tickers
-    results = {}
-    for symbol in watchlist:
-      print(f"Processing {symbol}...")
-
-      price_data = price_tool._run(symbol, days=40)
-      close_prices = [entry["close"] for entry in price_data if
-                      "close" in entry]
-
-      if len(close_prices) < 35:
-        print(f"Not enough data for {symbol}. Skipping.")
-        continue
-
-      forecast = forecast_tool._run(symbol, close_prices, vix=vix)
-      results[symbol] = forecast
-
-    return results
 
 
 # ------------- REPORTING TOOLS ---------------------------------------- #

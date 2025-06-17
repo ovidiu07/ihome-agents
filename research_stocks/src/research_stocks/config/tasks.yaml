@@ -1,99 +1,313 @@
 harvest_data:
   description: >
-    Use PoliticalNewsTool with proper inputs:
-      • query (string): political or macro keyword string
-      • days_back (int): how far back to search (e.g., 2)
-    Do not pass dictionaries — only literal values like:
-      {"query": "inflation OR interest rates", "days_back": 2}
+    Use all available tools to **collect, tag, and output raw market inputs** for each symbol. Each tool must operate **independently**, and output its results as structured JSON.
 
-    Symbols provided:
+    1. **PoliticalNewsTool**:
+       - Inputs:
+         - `query`: A well-formed Boolean macroeconomic string (e.g., "inflation OR interest rates OR central bank").
+         - `days_back`: Integer (how far back to search, e.g., 2).
+       - DO NOT pass a dict — use direct keyword arguments like:
+         `{"query": "recession OR fiscal tightening", "days_back": 2}`
+
+    2. **ETFDataTool**:
+       - For each ETF symbol, retrieve:
+         - Latest price
+         - NAV
+         - Volume
+         - AUM (Assets Under Management)
+         - Expense ratio (if available)
+       - Include timestamps and source attribution if possible.
+
+    3. **EquityFundamentalsTool**:
+       - For each equity symbol:
+         - Fetch current market cap, P/E, EPS, revenue, net income, and free cash flow.
+         - If dividend exists, include yield and payout ratio.
+         - Tag each record with data source and retrieval time.
+
+    4. **GlobalEventsTool**:
+       - Search for macroeconomic events, central bank meetings, regulatory changes, or political risk events in major economies.
+       - Tag by region (e.g., US, EU, China) and by likely affected sector if inferrable.
+
+    5. **SentimentScanTool**:
+       - Scan social media, Reddit, financial forums, and news for sentiment signals.
+       - Apply to both ETFs and equities.
+       - Classify per symbol:
+         - `sentiment_score`: float from -1 (bearish) to +1 (bullish)
+         - `volume`: number of mentions
+         - `top_quotes`: list of high-signal quotes
+
+    **Symbol Handling**:
+    - You will receive two lists:
       • ETFs: {etf_symbols}
       • Equities: {equity_symbols}
+    - Tools must process each symbol separately.
+    - Handle API failures gracefully (retry, then tag “Error”).
+
+    **Output**:
+    - Write 5 files:
+      - `raw_political_news.json`
+      - `raw_etf_data.json`
+      - `raw_equity_fundamentals.json`
+      - `raw_global_events.json`
+      - `raw_sentiment.json`
+
+    **Constraints**:
+    - Each file must be valid JSON and contain an array of records.
+    - Do NOT summarize, aggregate, or drop any symbols unless there's a critical failure.
+    - Validate that each file has been successfully written to disk.
+
   expected_output: >
-    Confirmation that the five JSON files above were written successfully.
+    A confirmation message listing all five expected JSON files and confirming successful creation:
+      • raw_political_news.json
+      • raw_etf_data.json
+      • raw_equity_fundamentals.json
+      • raw_global_events.json
+      • raw_sentiment.json
+
+    Example:
+    "✅ Successfully wrote 5 outputs: raw_political_news.json, raw_etf_data.json, raw_equity_fundamentals.json, raw_global_events.json, raw_sentiment.json"
+
   agent: data_harvester_agent
 
 fundamental_analysis:
   description: >
-    For each symbol provided, compute valuation metrics (P/E, EV/EBITDA, PEG,
-    P/B, dividend yield), benchmark against 1‑year and 5‑year medians and
-    sector peers. Detect catalysts such as earnings surprises or guidance changes.
-    Estimate intraday price drift individually.
+    For each symbol (ETF and equity), perform a **standalone fundamental valuation**.
 
-    DO NOT summarize across symbols — each must be processed separately.
-    
-    Symbols provided:
+    1. **Valuation Metrics**:
+       - Calculate: P/E, EV/EBITDA, PEG ratio, Price-to-Book (P/B), and dividend yield.
+       - Include the current value, 1-year median, 5-year median, and z-score if available.
+       - Use EV and EBITDA approximations based on available historical financials.
+
+    2. **Benchmarking**:
+       - Compare each metric to:
+         a. the symbol’s own 1-year and 5-year history.
+         b. sector peer group averages (provide sector if known or infer from metadata).
+       - Highlight where metrics deviate significantly (±1.5 standard deviations or more).
+
+    3. **Catalyst Detection**:
+       - Identify recent earnings beats/misses.
+       - Note guidance revisions, dividend announcements, insider transactions, or major filings.
+       - Indicate whether the catalyst is likely to influence valuation short-term.
+
+    4. **Drift Estimation**:
+       - Predict **intraday drift** using recent price action vs. fundamental surprises.
+       - If no clear signal, indicate “Neutral” drift with rationale.
+
+    5. **Output Schema Requirements**:
+       - Each symbol must be represented **independently**.
+       - The output MUST contain:
+         - `symbol`: ticker (e.g. NVDA, SPY)
+         - `valuation_metrics`: dict of all computed metrics
+         - `benchmarks`: dict of comparisons (1y, 5y, sector)
+         - `catalysts`: list of detected events
+         - `predicted_trend`: one of ['Up', 'Down', 'Neutral']
+         - `confidence`: float between 0 and 1
+         - `rationale`: short paragraph explaining the above
+
+    6. **Non-Aggregation Rule**:
+       - DO NOT summarize across symbols.
+       - DO NOT generalize patterns or group insights — each ticker is evaluated on its own merit.
+
+    Symbols to analyze:
       • ETFs: {etf_symbols}
       • Equities: {equity_symbols}
+
   expected_output: >
-    fundamental_summary.json with an array of objects holding symbol,
-    fundamentals, predicted_trend, confidence and rationale.
+    fundamental_summary.json as a JSON array, where each object includes:
+      - symbol
+      - valuation_metrics
+      - benchmarks
+      - catalysts
+      - predicted_trend
+      - confidence
+      - rationale
+
+    Example:
+    ```json
+    {
+      "symbol": "NVDA",
+      "valuation_metrics": { "P/E": 42.1, "EV/EBITDA": 28.4, ... },
+      "benchmarks": { "1y_median": { ... }, "5y_median": { ... }, "sector": { ... } },
+      "catalysts": ["Q1 earnings beat", "Raised Q2 revenue guidance"],
+      "predicted_trend": "Up",
+      "confidence": 0.86,
+      "rationale": "Valuation is rich but supported by strong earnings and raised guidance. Sector-relative PEG is still below average."
+    }
+    ```
+
   agent: valuation_engine_agent
 
 technical_analysis:
   description: >
-    Analyze the last 5 candles per symbol using the full OHLCV data.
-    For each entry, report:
-    - Date
-    - Open
-    - High
-    - Low
-    - Close
-    - Volume
+    Analyze the last 5 OHLCV candles for each provided symbol (ETF or equity). 
+    Your analysis must be structured, symbol-by-symbol, with no summarization across assets.
 
-    Use this format per symbol:
-    SYMBOL_NAME (last 5 candles):
-    - DATE: O=X H=Y L=Z C=W Vol=V
-    ...
+    For each symbol:
+      1. Parse the OHLCV data into 5 most recent entries.
+      2. Format each candle as:
+         - DATE: O=X H=Y L=Z C=W Vol=V
+      3. Apply technical analysis indicators:
+         - RSI (Relative Strength Index)
+         - MACD (Moving Average Convergence Divergence)
+         - Bollinger Bands
+         - Trendline / price drift
+         - Pattern detection (e.g., head and shoulders, double top/bottom, flags, wedges)
+      4. Provide directional interpretation:
+         - `trend`: one of “Uptrend”, “Downtrend”, “Sideways”
+         - `momentum_score`: float between -1.0 (strong bear) to +1.0 (strong bull)
+         - `pattern_notes`: any detected patterns or signal commentary
+
+    ⚠️ Do NOT aggregate across symbols.
+    Each asset is evaluated independently.
 
     ---
-    {{ formatted_ohlc_data }}
+    Input:
+      You are provided with:
+      - A formatted context variable called `formatted_ohlc_data`
+        Example:
+          **SPY** last 5 candles:
+          - 2025-06-13: O=598.5 H=601.85 L=595.48 C=597 Vol=89,505,996
+          - ...
+          **NVDA** last 5 candles:
+          - ...
+      - Raw tickers:
+        • ETFs: {etf_symbols}
+        • Equities: {equity_symbols}
+
+    🛠 Tools available:
+      - MarketPriceTool: fetches intraday or daily price data
+      - ForecastSignalTool: generates directional forecasts
+      - OHLCFormatterTool: standardizes candle layout
+      - (Optional) You may refer to classic TA indicators or signal libraries.
+
+    Formatting Rules:
+      - Markdown only
+      - Use headings (`## SYMBOL`) per asset
+      - List candles first, then indicators and interpretation
+      - Always include each symbol, even if no patterns found
+      - If no data is available, state “No price data available for SYMBOL”
+
   expected_output: >
-    A report listing technical summary for each symbol using the last 5 days of OHLCV data.
-    Format as Markdown per symbol, and include comments on detected trends or patterns.
+    A Markdown report that includes:
+      • Last 5 OHLCV candles per symbol, properly formatted
+      • RSI, MACD, Bollinger Band positioning
+      • Pattern analysis
+      • Interpretation with trend, momentum_score and pattern_notes
+      • A separate section per symbol using `## SYMBOL` header
+
+    Example:
+    ## SPY
+    - 2025-06-13: O=598.5 H=601.85 L=595.48 C=597 Vol=89,505,996
+    - ...
+    **Indicators**:
+    - RSI: 62 (neutral)
+    - MACD: Slightly bullish crossover detected
+    - Bollinger: Approaching upper band
+    **Interpretation**:
+    - trend: Uptrend
+    - momentum_score: +0.4
+    - pattern_notes: Ascending triangle breakout in progress
+
+    Repeat this structure for all symbols.
+
+  agent: pattern_scanner_agent
 
 compose_report:
   description: >
-    For each ticker passed (ETF or equity), generate a dedicated markdown section with:
-      • a heading: ## Equity Outlook - [symbol] or ## ETF Outlook - [symbol]
-      • raw or lightly processed fundamental summary
-      • raw or lightly processed technical indicators
-      • final trend direction with confidence and rationale
+    Create a structured, readable, and clearly formatted markdown report for each provided ETF and equity.
 
-    Each symbol must be reported separately. Do NOT summarize across multiple tickers.
-    Avoid condensing sections or skipping data.
-    
-    Format must be in markdown with headers and bolded tickers. Include
-    a timestamp footer and clear sections.
+    ✅ For EACH ticker (ETF or equity), the report MUST include:
+      - A header:
+          • Use `## ETF Outlook - [SYMBOL]` or `## Equity Outlook - [SYMBOL]`
+      - Raw or lightly processed content from:
+          • fundamental_summary.json
+          • technical_signals.json
+      - A clearly separated block labeled “**Final Outlook**” that includes:
+          • Predicted trend direction (Uptrend, Downtrend, Sideways)
+          • Confidence score (0.0 to 1.0)
+          • Rationale (1-2 sentences, use the data, don't paraphrase)
 
-    Symbols provided:
+    ⚠️ NEVER summarize across tickers.
+    ⚠️ NEVER rewrite or condense fundamental or technical summaries.
+    ⚠️ If any section is empty or missing for a symbol, insert:
+        _“No data available for [symbol] in this section.”_
+
+    💡 Formatting Rules:
+      • Use Markdown syntax consistently
+      • Symbols must appear in `**bold**` on first reference
+      • Sections should be visually distinct with headings (`##`)
+      • Include a timestamp footer at the end of the report in the format:
+          _Report generated on YYYY-MM-DD at HH:MM EET_
+      • Maintain a consistent order: fundamentals → technicals → final outlook
+      • Do not editorialize – this is a formatting and assembly task
+
+    Input variables available:
       • ETFs: {etf_symbols}
       • Equities: {equity_symbols}
+
+    📂 Refer to these files:
+      • fundamental_summary.json
+      • technical_signals.json
+      • raw_political_news.json (optional)
+      • raw_global_events.json (optional)
+
+    Optional:
+      - You may insert a brief section header at the top like:
+        `# Daily Market Briefing - [DATE]`
+
   expected_output: >
-    A markdown-formatted report covering all input tickers, saved to
-    daily_market_brief.md. Include summary per symbol in structured sections.
+    A fully formatted markdown document saved as daily_market_brief.md, 
+    structured with one section per ticker, each containing:
+      • Fundamental summary
+      • Technical indicators
+      • Final trend direction with confidence
+    The document must end with a timestamp footer.
+
   output_file: daily_market_brief.md
   agent: report_composer_agent
 
 compose_report_followup:
   description: >
-    Continue the market briefing by adding one section per remaining ticker.
-    Each section must include:
-      • Heading per symbol
-      • Technical + fundamental trend details
-      • Confidence and rationale
+    Append additional sections to the ongoing daily market briefing, ensuring each new ticker 
+    (ETF or equity) receives its own clearly formatted markdown segment.
 
-    Sections must be added independently. Do NOT group or summarize across tickers.
-    Maintain full structure and clarity.
-    
-    Append output to existing daily_market_brief.md. Use clear markdown
-    formatting and a timestamp footer.
+    ✅ For EACH ticker, include:
+      - A section header using `## ETF Outlook - [SYMBOL]` or `## Equity Outlook - [SYMBOL]`
+      - Fundamental summary from fundamental_summary.json
+      - Technical indicator block from technical_signals.json
+      - A separate **Final Outlook** block showing:
+          • Trend direction (Uptrend, Downtrend, Sideways)
+          • Confidence score (0.0 to 1.0)
+          • Brief rationale (1-2 lines max, derived directly from the inputs)
 
-    Symbols provided:
+    🛑 DO NOT:
+      - Summarize across tickers
+      - Skip sections unless the data is missing (in which case add a note)
+      - Alter original data content – format only
+
+    ✅ Formatting Guidelines:
+      • Use Markdown
+      • Bold each symbol on first reference
+      • Maintain structure: fundamentals → technicals → outlook
+      • Use dividers (e.g., `---`) between ticker sections for readability
+      • Append a new timestamp at the end:
+          _Appended on YYYY-MM-DD at HH:MM EET_
+
+    Inputs:
       • ETFs: {etf_symbols}
       • Equities: {equity_symbols}
+      • You should use the same formatting conventions as the initial report
+
+    Reference files:
+      • fundamental_summary.json
+      • technical_signals.json
+      • (optional) raw_political_news.json, raw_global_events.json
+
   expected_output: >
-    A markdown-formatted report covering all input tickers, saved to
-    daily_market_brief.md. Include summary per symbol in structured sections.
+    A structured markdown report saved to daily_market_brief.md, appended with new
+    sections for the tickers passed. Each section must be well-formatted and complete
+    with fundamentals, technicals, and final outlook. A new timestamp must follow the 
+    newly added content.
+
   output_file: daily_market_brief.md
   agent: report_composer_agent
