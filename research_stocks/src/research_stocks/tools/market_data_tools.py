@@ -103,8 +103,8 @@ class PoliticalNewsTool(BaseTool):
       data = _request_with_retries(url, rate_limiter=RateLimiter(1))
       articles = data.get("articles", [])
       raw = json.dumps(articles)
-      if len(raw) > 10_000:
-        articles = json.loads(raw[:10_000])
+      if len(articles) > 50:
+        articles = articles[:50]
     except Exception as e:
       raise RuntimeError(f"Failed to fetch political news: {str(e)}")
 

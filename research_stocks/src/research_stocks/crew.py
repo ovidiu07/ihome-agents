@@ -177,10 +177,17 @@ class StockAnalysisCrew:
     price_tool = MarketPriceTool()
     formatter = OHLCFormatterTool()
     summaries = []
+    symbol_to_close_prices = {}  # 🆕 collect close prices per ticker
 
     for symbol in watchlist:
         try:
             raw_ohlc = price_tool._run(ticker=symbol, days=60)
+            # 🆕 Extract and store close prices
+            close_prices = [entry["close"] for entry in raw_ohlc if "close" in entry]
+            if len(close_prices) >= 35:
+              symbol_to_close_prices[symbol] = close_prices
+            else:
+              print(f"⚠️ Not enough close prices for {symbol}")
             summary = formatter._run(ohlc_data=raw_ohlc, symbol=symbol, max_rows=5)
             summaries.append(summary)
         except Exception as e:
@@ -200,6 +207,7 @@ class StockAnalysisCrew:
             "etf_symbols": ", ".join(self.etf_watchlist()),
             "equity_symbols": ", ".join(self.equity_watchlist()),
             "formatted_ohlc_data": combined_summary,  # Valid default.
+            "close_price_map": symbol_to_close_prices,  # 🆕 For ForecastSignalTool
         },
     )
 

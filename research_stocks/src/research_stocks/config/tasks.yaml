@@ -156,6 +156,7 @@ technical_analysis:
          - `trend`: one of “Uptrend”, “Downtrend”, “Sideways”
          - `momentum_score`: float between -1.0 (strong bear) to +1.0 (strong bull)
          - `pattern_notes`: any detected patterns or signal commentary
+      5. Call ForecastSignalTool on each ticker using the data in `close_price_map`.
 
     ⚠️ Do NOT aggregate across symbols.
     Each asset is evaluated independently.
