@@ -17,7 +17,7 @@ from tools.market_data_tools import (PoliticalNewsTool, ETFDataTool,
                                      HistoricalFinancialsTool, MarketPriceTool,
                                      GlobalEventsTool, MarkdownFormatterTool,
                                      SlackPosterTool, GrammarCheckTool,
-                                     ForecastSignalTool)
+                                     ForecastSignalTool, PatternRecognitionTool)
 
 load_dotenv()
 
@@ -158,7 +158,7 @@ class StockAnalysisCrew:
     return Agent(config=self.agents_yaml()["pattern_scanner"], verbose=True,
                  llm=get_appropriate_llm("low"),
                  tools=[MarketPriceTool(), ForecastSignalTool(),
-                        OHLCFormatterTool(),
+                        PatternRecognitionTool()
                         # 🆕 Add technical-sentiment forecast logic
                         ])
 

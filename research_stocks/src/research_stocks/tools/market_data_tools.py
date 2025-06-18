@@ -9,7 +9,9 @@ import time
 from crewai.tools import BaseTool
 from crewai.tools.base_tool import BaseTool
 from dotenv import load_dotenv
+import numpy as np
 from pathlib import Path
+import talib
 
 CACHE_DIR = os.getenv("CACHE_DIR")
 load_dotenv()
@@ -668,6 +670,77 @@ class GrammarCheckTool(BaseTool):
     track_token_usage("gpt-3.5-turbo", usage.prompt_tokens,
                       usage.completion_tokens)
     return resp.choices[0].message.content
+
+
+
+class PatternRecognitionTool(BaseTool):
+  name: str = "PatternRecognitionTool"
+  description: str = (
+    "Analyze OHLC data and return common candlestick patterns (e.g., hammer, engulfing)."
+  )
+
+  def _run(self, ticker: str, ohlc_data: list[dict]):
+    if not ohlc_data or len(ohlc_data) < 10:
+      return {"error": "Insufficient OHLC data for pattern recognition"}
+
+    # Extract fields
+    open_prices = np.array([float(d["open"]) for d in ohlc_data], dtype=np.float64)
+    high_prices = np.array([float(d["high"]) for d in ohlc_data], dtype=np.float64)
+    low_prices = np.array([float(d["low"]) for d in ohlc_data], dtype=np.float64)
+    close_prices = np.array([float(d["close"]) for d in ohlc_data], dtype=np.float64)
+    dates = [d["date"] for d in ohlc_data]
+
+    patterns = {
+      "Hammer": talib.CDLHAMMER(open_prices, high_prices, low_prices, close_prices),
+      "InvertedHammer": talib.CDLINVERTEDHAMMER(open_prices, high_prices, low_prices, close_prices),
+      "Engulfing": talib.CDLENGULFING(open_prices, high_prices, low_prices, close_prices),
+      "Harami": talib.CDLHARAMI(open_prices, high_prices, low_prices, close_prices),
+      "HaramiCross": talib.CDLHARAMICROSS(open_prices, high_prices, low_prices, close_prices),
+      "Doji": talib.CDLDOJI(open_prices, high_prices, low_prices, close_prices),
+      "DragonflyDoji": talib.CDLDRAGONFLYDOJI(open_prices, high_prices, low_prices, close_prices),
+      "GravestoneDoji": talib.CDLGRAVESTONEDOJI(open_prices, high_prices, low_prices, close_prices),
+      "ShootingStar": talib.CDLSHOOTINGSTAR(open_prices, high_prices, low_prices, close_prices),
+      "MorningStar": talib.CDLMORNINGSTAR(open_prices, high_prices, low_prices, close_prices),
+      "EveningStar": talib.CDLEVENINGSTAR(open_prices, high_prices, low_prices, close_prices),
+      "ThreeWhiteSoldiers": talib.CDL3WHITESOLDIERS(open_prices, high_prices, low_prices, close_prices),
+      "ThreeBlackCrows": talib.CDL3BLACKCROWS(open_prices, high_prices, low_prices, close_prices),
+      "Marubozu": talib.CDLMARUBOZU(open_prices, high_prices, low_prices, close_prices),
+      "PiercingLine": talib.CDLPIERCING(open_prices, high_prices, low_prices, close_prices),
+      "DarkCloudCover": talib.CDLDARKCLOUDCOVER(open_prices, high_prices, low_prices, close_prices)
+    }
+
+    matches = []
+    for pattern_name, results in patterns.items():
+      for i, value in enumerate(results):
+        if value != 0:
+          direction = "bullish" if value > 0 else "bearish"
+          matches.append({
+            "date": dates[i],
+            "pattern": pattern_name,
+            "direction": direction,
+            "value": int(value)
+          })
+
+    # Save as Markdown
+    md_lines = [f"# Pattern Recognition for {ticker.upper()}"]
+    if matches:
+      for m in matches:
+        md_lines.append(
+            f"- `{m['date']}`: **{m['pattern']}** ({m['direction'].upper()})"
+        )
+    else:
+      md_lines.append("No notable candlestick patterns found in the provided data.")
+
+    md_path = Path(f"{ticker.upper()}_patterns.md")
+    with open(md_path, "w") as f:
+      f.write("\n".join(md_lines))
+
+    # Optional: save JSON too
+    json_path = Path(f"{ticker.upper()}_patterns.json")
+    with open(json_path, "w") as f:
+      json.dump(matches, f, indent=2)
+
+    return matches
 
 
 def check_api_health() -> dict:
