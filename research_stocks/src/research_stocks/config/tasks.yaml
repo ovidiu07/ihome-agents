@@ -226,6 +226,12 @@ compose_report:
           • Predicted trend direction (Uptrend, Downtrend, Sideways)
           • Confidence score (0.0 to 1.0)
           • Rationale (1-2 sentences, use the data, don't paraphrase)
+      - A new section titled **Forecast Summary** under each ticker (if available), including:
+          • `Next Day High`
+          • `Next Day Low`
+          • `Today High Estimate`
+          • `Today Low Estimate`
+          • `Advice`
 
     ⚠️ NEVER summarize across tickers.
     ⚠️ NEVER rewrite or condense fundamental or technical summaries.
@@ -240,6 +246,12 @@ compose_report:
           _Report generated on YYYY-MM-DD at HH:MM EET_
       • Maintain a consistent order: fundamentals → technicals → final outlook
       • Do not editorialize – this is a formatting and assembly task
+        ### Forecast Summary
+        - **Next Day High**: ...
+        - **Next Day Low**: ...
+        - **Today High Estimate**: ...
+        - **Today Low Estimate**: ...
+        - **Advice**: ...
 
     Input variables available:
       • ETFs: {etf_symbols}
@@ -279,6 +291,12 @@ compose_report_followup:
           • Trend direction (Uptrend, Downtrend, Sideways)
           • Confidence score (0.0 to 1.0)
           • Brief rationale (1-2 lines max, derived directly from the inputs)
+      - **Forecast Summary** (if available):
+          • Next Day High
+          • Next Day Low
+          • Today High Estimate
+          • Today Low Estimate
+          • Advice
 
     🛑 DO NOT:
       - Summarize across tickers

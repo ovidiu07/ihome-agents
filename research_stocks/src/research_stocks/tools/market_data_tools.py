@@ -606,7 +606,23 @@ class ForecastSignalTool(BaseTool):
     json_path = Path(f"{ticker.upper()}_forecast.json")
     with open(json_path, "w") as jf:
       json.dump(forecast, jf, indent=2)
+        # --- Write Markdown Summary ---
+    md_lines = [
+      f"# Forecast Signal - {ticker.upper()}",
+      f"- **Current Price**: {forecast['current_price']}",
+      f"- **RSI**: {forecast['rsi']}",
+      f"- **MACD**: {forecast['macd']} (signal: {forecast['macd_signal']})",
+      f"- **Volatility (10-day)**: {forecast['expected_volatility_%']}%",
+      f"- **Next Day High**: {forecast['next_day_high']}",
+      f"- **Next Day Low**: {forecast['next_day_low']}",
+      f"- **Today High Estimate**: {forecast['today_high_estimate']}",
+      f"- **Today Low Estimate**: {forecast['today_low_estimate']}",
+      f"- **Advice**: {forecast['advice']}"
+    ]
 
+    md_path = Path(f"{ticker.upper()}_forecast.md")
+    with open(md_path, "w") as f:
+      f.write("\n".join(md_lines))
     return forecast
 
 
