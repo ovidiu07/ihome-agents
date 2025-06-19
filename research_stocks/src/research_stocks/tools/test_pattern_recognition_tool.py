@@ -3,29 +3,28 @@ import json
 from pathlib import Path
 from tools.market_data_tools import PatternRecognitionTool
 
-# Sample mock OHLC data designed to simulate known patterns
 mock_ohlc = [
-  # Bullish Engulfing (day 2 engulfs day 1)
-  {"date": "2025-06-01", "open": 105, "high": 106, "low": 104, "close": 104.5},
-  {"date": "2025-06-02", "open": 104, "high": 108, "low": 103.5, "close": 107.5},
+  # Engulfing (bullish)
+  {"date": "2025-06-01", "open": 106, "high": 107, "low": 105.8, "close": 105.7},
+  {"date": "2025-06-02", "open": 105.6, "high": 109.0, "low": 105.5, "close": 108.9},
 
   # Hammer
-  {"date": "2025-06-03", "open": 107, "high": 108, "low": 104, "close": 107.8},
+  {"date": "2025-06-03", "open": 109.0, "high": 109.2, "low": 105.0, "close": 109.1},
 
   # Shooting Star
-  {"date": "2025-06-04", "open": 108, "high": 111, "low": 107.5, "close": 108.2},
+  {"date": "2025-06-04", "open": 109.0, "high": 112.5, "low": 108.9, "close": 109.1},
 
   # Doji
-  {"date": "2025-06-05", "open": 108, "high": 109, "low": 107, "close": 108},
+  {"date": "2025-06-05", "open": 108.8, "high": 109.2, "low": 108.6, "close": 108.8},
 
-  # Morning Star (3-day pattern)
-  {"date": "2025-06-06", "open": 107.5, "high": 108, "low": 106.5, "close": 107},
-  {"date": "2025-06-07", "open": 106.5, "high": 107, "low": 104.5, "close": 105},
-  {"date": "2025-06-08", "open": 105.5, "high": 108.5, "low": 105, "close": 108},
+  # Morning Star: red, small body, green
+  {"date": "2025-06-06", "open": 109.0, "high": 109.1, "low": 105.8, "close": 106.0},
+  {"date": "2025-06-07", "open": 106.0, "high": 106.5, "low": 105.0, "close": 105.8},
+  {"date": "2025-06-08", "open": 106.0, "high": 109.5, "low": 105.8, "close": 109.3},
 
-  # Fill remaining to satisfy >10 bars for pattern recognition
+  # Filler bars to reach 20
   *[
-    {"date": f"2025-06-{day:02d}", "open": 108, "high": 109, "low": 107, "close": 108}
+    {"date": f"2025-06-{day:02d}", "open": 110, "high": 111, "low": 109, "close": 110}
     for day in range(9, 21)
   ]
 ]

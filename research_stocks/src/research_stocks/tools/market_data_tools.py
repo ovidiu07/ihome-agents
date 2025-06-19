@@ -676,58 +676,63 @@ class GrammarCheckTool(BaseTool):
 class PatternRecognitionTool(BaseTool):
   name: str = "PatternRecognitionTool"
   description: str = (
-    "Analyze OHLC data and return common candlestick patterns (e.g., hammer, engulfing)."
+    "Analyze OHLC data and return strong candlestick patterns (e.g., hammer, engulfing)."
   )
 
-  def _run(self, ticker: str, ohlc_data: list[dict]):
+  def _run(self, ticker: str, ohlc_data: list[dict], min_strength: int = 80):
     if not ohlc_data or len(ohlc_data) < 10:
       return {"error": "Insufficient OHLC data for pattern recognition"}
 
-    # Extract fields
-    open_prices = np.array([float(d["open"]) for d in ohlc_data], dtype=np.float64)
-    high_prices = np.array([float(d["high"]) for d in ohlc_data], dtype=np.float64)
-    low_prices = np.array([float(d["low"]) for d in ohlc_data], dtype=np.float64)
-    close_prices = np.array([float(d["close"]) for d in ohlc_data], dtype=np.float64)
+    open_prices = np.array([float(d["open"]) for d in ohlc_data])
+    high_prices = np.array([float(d["high"]) for d in ohlc_data])
+    low_prices = np.array([float(d["low"]) for d in ohlc_data])
+    close_prices = np.array([float(d["close"]) for d in ohlc_data])
     dates = [d["date"] for d in ohlc_data]
 
+    # Use all available TA-Lib candlestick patterns
     patterns = {
-      "Hammer": talib.CDLHAMMER(open_prices, high_prices, low_prices, close_prices),
-      "InvertedHammer": talib.CDLINVERTEDHAMMER(open_prices, high_prices, low_prices, close_prices),
-      "Engulfing": talib.CDLENGULFING(open_prices, high_prices, low_prices, close_prices),
-      "Harami": talib.CDLHARAMI(open_prices, high_prices, low_prices, close_prices),
-      "HaramiCross": talib.CDLHARAMICROSS(open_prices, high_prices, low_prices, close_prices),
-      "Doji": talib.CDLDOJI(open_prices, high_prices, low_prices, close_prices),
-      "DragonflyDoji": talib.CDLDRAGONFLYDOJI(open_prices, high_prices, low_prices, close_prices),
-      "GravestoneDoji": talib.CDLGRAVESTONEDOJI(open_prices, high_prices, low_prices, close_prices),
-      "ShootingStar": talib.CDLSHOOTINGSTAR(open_prices, high_prices, low_prices, close_prices),
-      "MorningStar": talib.CDLMORNINGSTAR(open_prices, high_prices, low_prices, close_prices),
-      "EveningStar": talib.CDLEVENINGSTAR(open_prices, high_prices, low_prices, close_prices),
-      "ThreeWhiteSoldiers": talib.CDL3WHITESOLDIERS(open_prices, high_prices, low_prices, close_prices),
-      "ThreeBlackCrows": talib.CDL3BLACKCROWS(open_prices, high_prices, low_prices, close_prices),
-      "Marubozu": talib.CDLMARUBOZU(open_prices, high_prices, low_prices, close_prices),
-      "PiercingLine": talib.CDLPIERCING(open_prices, high_prices, low_prices, close_prices),
-      "DarkCloudCover": talib.CDLDARKCLOUDCOVER(open_prices, high_prices, low_prices, close_prices)
+      "Hammer": talib.CDLHAMMER,
+      "InvertedHammer": talib.CDLINVERTEDHAMMER,
+      "Engulfing": talib.CDLENGULFING,
+      "Harami": talib.CDLHARAMI,
+      "HaramiCross": talib.CDLHARAMICROSS,
+      "Doji": talib.CDLDOJI,
+      "DragonflyDoji": talib.CDLDRAGONFLYDOJI,
+      "GravestoneDoji": talib.CDLGRAVESTONEDOJI,
+      "ShootingStar": talib.CDLSHOOTINGSTAR,
+      "MorningStar": talib.CDLMORNINGSTAR,
+      "EveningStar": talib.CDLEVENINGSTAR,
+      "ThreeWhiteSoldiers": talib.CDL3WHITESOLDIERS,
+      "ThreeBlackCrows": talib.CDL3BLACKCROWS,
+      "Marubozu": talib.CDLMARUBOZU,
+      "PiercingLine": talib.CDLPIERCING,
+      "DarkCloudCover": talib.CDLDARKCLOUDCOVER
     }
 
     matches = []
-    for pattern_name, results in patterns.items():
-      for i, value in enumerate(results):
-        if value != 0:
-          direction = "bullish" if value > 0 else "bearish"
+    seen_dates = set()
+
+    for pattern_name, func in patterns.items():
+      values = func(open_prices, high_prices, low_prices, close_prices)
+      for i, val in enumerate(values):
+        if abs(val) >= min_strength and dates[i] not in seen_dates:
+          direction = "bullish" if val > 0 else "bearish"
           matches.append({
             "date": dates[i],
             "pattern": pattern_name,
             "direction": direction,
-            "value": int(value)
+            "value": int(val)
           })
+          seen_dates.add(dates[i])
 
-    # Save as Markdown
+    # Sort results: newest first, then strongest signal
+    matches.sort(key=lambda m: (-abs(m['value']), m['date']))
+
+    # Save Markdown
     md_lines = [f"# Pattern Recognition for {ticker.upper()}"]
     if matches:
       for m in matches:
-        md_lines.append(
-            f"- `{m['date']}`: **{m['pattern']}** ({m['direction'].upper()})"
-        )
+        md_lines.append(f"- `{m['date']}`: **{m['pattern']}** ({m['direction'].upper()})")
     else:
       md_lines.append("No notable candlestick patterns found in the provided data.")
 
@@ -735,7 +740,6 @@ class PatternRecognitionTool(BaseTool):
     with open(md_path, "w") as f:
       f.write("\n".join(md_lines))
 
-    # Optional: save JSON too
     json_path = Path(f"{ticker.upper()}_patterns.json")
     with open(json_path, "w") as f:
       json.dump(matches, f, indent=2)
