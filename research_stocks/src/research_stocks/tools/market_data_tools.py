@@ -12,6 +12,8 @@ from dotenv import load_dotenv
 import numpy as np
 from pathlib import Path
 import talib
+from .advanced_pattern_helpers import apply_custom_patterns
+
 
 CACHE_DIR = os.getenv("CACHE_DIR")
 load_dotenv()
@@ -676,20 +678,24 @@ class GrammarCheckTool(BaseTool):
 class PatternRecognitionTool(BaseTool):
   name: str = "PatternRecognitionTool"
   description: str = (
-    "Analyze OHLC data and return strong candlestick patterns (e.g., hammer, engulfing)."
+    "Analyze OHLC data and return candlestick + structural patterns "
+    "(e.g., hammer, double bottom, head and shoulders)."
   )
 
   def _run(self, ticker: str, ohlc_data: list[dict], min_strength: int = 80):
     if not ohlc_data or len(ohlc_data) < 10:
       return {"error": "Insufficient OHLC data for pattern recognition"}
 
-    open_prices = np.array([float(d["open"]) for d in ohlc_data])
-    high_prices = np.array([float(d["high"]) for d in ohlc_data])
-    low_prices = np.array([float(d["low"]) for d in ohlc_data])
-    close_prices = np.array([float(d["close"]) for d in ohlc_data])
-    dates = [d["date"] for d in ohlc_data]
+    df = pd.DataFrame(ohlc_data)
+    df.columns = df.columns.str.capitalize()  # Ensure TA-lib compatibility
 
-    # Use all available TA-Lib candlestick patterns
+    # -- TA-Lib candlestick patterns --
+    open_prices = df["Open"].values
+    high_prices = df["High"].values
+    low_prices = df["Low"].values
+    close_prices = df["Close"].values
+    dates = df["Date"].tolist()
+
     patterns = {
       "Hammer": talib.CDLHAMMER,
       "InvertedHammer": talib.CDLINVERTEDHAMMER,
@@ -706,7 +712,7 @@ class PatternRecognitionTool(BaseTool):
       "ThreeBlackCrows": talib.CDL3BLACKCROWS,
       "Marubozu": talib.CDLMARUBOZU,
       "PiercingLine": talib.CDLPIERCING,
-      "DarkCloudCover": talib.CDLDARKCLOUDCOVER
+      "DarkCloudCover": talib.CDLDARKCLOUDCOVER,
     }
 
     matches = []
@@ -716,32 +722,36 @@ class PatternRecognitionTool(BaseTool):
       values = func(open_prices, high_prices, low_prices, close_prices)
       for i, val in enumerate(values):
         if abs(val) >= min_strength and dates[i] not in seen_dates:
-          direction = "bullish" if val > 0 else "bearish"
           matches.append({
             "date": dates[i],
             "pattern": pattern_name,
-            "direction": direction,
+            "direction": "bullish" if val > 0 else "bearish",
             "value": int(val)
           })
           seen_dates.add(dates[i])
 
-    # Sort results: newest first, then strongest signal
-    matches.sort(key=lambda m: (-abs(m['value']), m['date']))
+    # -- Custom patterns --
+    custom_signals = apply_custom_patterns(df.copy())
+    matches.extend(custom_signals)
 
-    # Save Markdown
+    # Sort by date then signal strength
+    matches.sort(key=lambda m: (m["date"], -abs(m.get("value", 80))))
+
+    # Markdown summary
     md_lines = [f"# Pattern Recognition for {ticker.upper()}"]
     if matches:
       for m in matches:
-        md_lines.append(f"- `{m['date']}`: **{m['pattern']}** ({m['direction'].upper()})")
+        line = f"- `{m['date']}`: **{m['pattern']}**"
+        if "direction" in m:
+          line += f" ({m['direction'].upper()})"
+        md_lines.append(line)
     else:
-      md_lines.append("No notable candlestick patterns found in the provided data.")
+      md_lines.append("No notable patterns found.")
 
-    md_path = Path(f"{ticker.upper()}_patterns.md")
-    with open(md_path, "w") as f:
+    with open(f"{ticker.upper()}_patterns.md", "w") as f:
       f.write("\n".join(md_lines))
 
-    json_path = Path(f"{ticker.upper()}_patterns.json")
-    with open(json_path, "w") as f:
+    with open(f"{ticker.upper()}_patterns.json", "w") as f:
       json.dump(matches, f, indent=2)
 
     return matches
