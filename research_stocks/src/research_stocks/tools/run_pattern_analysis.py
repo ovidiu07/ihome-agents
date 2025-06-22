@@ -15,13 +15,13 @@ def main():
   #plot_analysis_results(results)
   print_summary_report(results)
 
-  print("\n🧠 Pattern Recognition Results")
-  if results["patterns"]:
-    for p in results["patterns"]:
-      print(
-          f"- {p['start_date']} to {p['end_date']}: {p['pattern']} ({p['direction']}, score={p['value']})")
-  else:
-    print("No patterns detected.")
+  # print("\n🧠 Pattern Recognition Results")
+  # if results["patterns"]:
+  #   for p in results["patterns"]:
+  #     print(
+  #         f"- {p['start_date']} to {p['end_date']}: {p['pattern']} ({p['direction']}, score={p['value']})")
+  # else:
+  #   print("No patterns detected.")
 
 if __name__ == "__main__":
   main()
