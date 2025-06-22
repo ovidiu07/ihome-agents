@@ -480,11 +480,18 @@ def export_analysis_results(results: Dict[str, any],
     preds_df = pd.DataFrame(results["next_predictions"])
     if not preds_df.empty:
       preds_df["start_date"] = preds_df["start_date"].astype(str)
-      preds_df["end_date"] = preds_df["end_date"].astype(
-        str)  # Save back-test summary
+      preds_df["end_date"] = preds_df["end_date"].astype(str)
+    json.dump(preds_df.to_dict(orient="records"), f, indent=2)
   with open(f"{output_dir}/backtest_summary.json", "w") as f:
     json.dump(results["backtest_summary"], f, indent=2)
-    json.dump(preds_df.to_dict(orient="records"), f, indent=2)
+
+  # --- cache the full results structure for quick reuse ---------------
+  with open(f"{output_dir}/results_cache.json", "w") as f:
+      # Ensure all dates are stringified for safe JSON serialization
+      cache = results.copy()
+      cache["equity_curve"] = cache["equity_curve"].to_dict(orient="records")
+      # next_predictions already string‑dates; patterns fine
+      json.dump(cache, f, indent=2)
 
 
 def plot_analysis_results(results: Dict[str, any]):
