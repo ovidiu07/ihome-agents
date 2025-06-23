@@ -1,11 +1,13 @@
 import json
+import os
+import statistics
+from datetime import timedelta
+from typing import List, Dict
+
 import matplotlib.pyplot as plt
 import numpy as np
-import os
 import pandas as pd
-from datetime import datetime, timedelta
 from scipy.stats import linregress
-from typing import List, Dict
 
 
 def slope(series: pd.Series) -> float:
@@ -58,7 +60,7 @@ def detect_pivots(df: pd.DataFrame, left: int = 3, right: int = 3,
             high > df["High"].iloc[i - j] for j in range(1, left + 1)) or any(
             high > df["High"].iloc[i + j] for j in range(1, right + 1))))
     is_low = (lower_left and lower_right and (
-          df["High"].iloc[i] - low) / low > min_diff and (any(
+        df["High"].iloc[i] - low) / low > min_diff and (any(
         low < df["Low"].iloc[i - j] for j in range(1, left + 1)) or any(
         low < df["Low"].iloc[i + j] for j in range(1, right + 1))))
 
@@ -342,8 +344,8 @@ def detect_inverse_head_shoulders_raw(df: pd.DataFrame, window: int = 3,
     if abs(ls["Low"] - rs["Low"]) / ((ls["Low"] + rs["Low"]) / 2) <= tolerance:
       if head["Low"] < ls["Low"] and head["Low"] < rs["Low"]:
         patterns.append({"start_date": ls["Date"], "end_date": rs["Date"],
-          "pattern": "Inverse Head and Shoulders", "direction": "bullish",
-          "value": 100, })
+                         "pattern": "Inverse Head and Shoulders",
+                         "direction": "bullish", "value": 100, })
   return patterns
 
 
@@ -365,8 +367,8 @@ def detect_ascending_triangle_raw(df: pd.DataFrame, window: int = 3,
     if flat_highs and rising_lows:
       patterns.append(
           {"start_date": seg.iloc[0]["Date"], "end_date": seg.iloc[-1]["Date"],
-            "pattern": "Ascending Triangle", "direction": "bullish",
-            "value": 95, })
+           "pattern": "Ascending Triangle", "direction": "bullish",
+           "value": 95, })
   return patterns
 
 
@@ -390,7 +392,8 @@ def detect_double_bottom_raw(df: pd.DataFrame, window: int = 5,
       continue
 
     patterns.append({"start_date": low1["Date"], "end_date": low2["Date"],
-      "pattern": "Double Bottom", "direction": "bullish", "value": 100, })
+                     "pattern": "Double Bottom", "direction": "bullish",
+                     "value": 100, })
   return patterns
 
 
@@ -487,11 +490,11 @@ def export_analysis_results(results: Dict[str, any],
 
   # --- cache the full results structure for quick reuse ---------------
   with open(f"{output_dir}/results_cache.json", "w") as f:
-      # Ensure all dates are stringified for safe JSON serialization
-      cache = results.copy()
-      cache["equity_curve"] = cache["equity_curve"].to_dict(orient="records")
-      # next_predictions already string‑dates; patterns fine
-      json.dump(cache, f, indent=2)
+    # Ensure all dates are stringified for safe JSON serialization
+    cache = results.copy()
+    cache["equity_curve"] = cache["equity_curve"].to_dict(orient="records")
+    # next_predictions already string‑dates; patterns fine
+    json.dump(cache, f, indent=2)
 
 
 def plot_analysis_results(results: Dict[str, any]):
@@ -525,8 +528,8 @@ def print_summary_report(results: Dict[str, any]):
   print("\n💰 Backtest Summary:")
   b = results["backtest_summary"]
   print(
-    f"Start Equity: ${b['start_equity']:.2f} → End Equity: ${b['end_equity']:.2f} "
-    f"(Net PnL: ${b['net_pnl']:.2f})")
+      f"Start Equity: ${b['start_equity']:.2f} → End Equity: ${b['end_equity']:.2f} "
+      f"(Net PnL: ${b['net_pnl']:.2f})")
 
   if results["next_predictions"]:
     print("\n🔮 Forecast for Next 2 Days:")
@@ -582,8 +585,10 @@ def analyze_patterns(df: pd.DataFrame, window: int = 5,
   # -------------------------------------------------
   equity_curve = backtest_pattern_strategy(df, results)
   backtest_summary = {"start_equity": float(equity_curve.iloc[0]["Equity"]),
-    "end_equity": float(equity_curve.iloc[-1]["Equity"]), "net_pnl": float(
-      equity_curve.iloc[-1]["Equity"] - equity_curve.iloc[0]["Equity"]), }
+                      "end_equity": float(equity_curve.iloc[-1]["Equity"]),
+                      "net_pnl": float(
+                          equity_curve.iloc[-1]["Equity"] - equity_curve.iloc[0][
+                            "Equity"]), }
 
   # -------------------------------------------------
   # 3) 2-day forecast (sequential bars)
@@ -606,42 +611,112 @@ def analyze_patterns(df: pd.DataFrame, window: int = 5,
     # Next two weekday dates
     forecast_dates: List[pd.Timestamp] = []
     curr_date = pd.to_datetime(df["Date"].max())
-    while len(forecast_dates) < 2:
+    while len(forecast_dates) < 1:
       curr_date += timedelta(days=1)
       if curr_date.weekday() < 5:  # Monday-Friday only
         forecast_dates.append(curr_date)
 
-    # Sequential bar construction
-    bars = []
-    last_close_price = df["Close"].iloc[-1]  # previous real close
+    # ---- sequential bar construction with momentum & ATR logic --------
+    tick = 0.05  # price is rounded to the nearest 5 ¢
+
+    # Helper for tick rounding
+    def q(val: float) -> float:
+      return round(round(val / tick) * tick, 2)
+
+    bars: List[Dict] = []
+    last_close_price = df["Close"].iloc[-1]
+
+    # Compute short‑term momentum (2‑bar drift) to temper pattern bias
+    if len(df) >= 3:
+      fast_drift = (df["Close"].iloc[-1] - df["Close"].iloc[-3]) / 2
+    else:
+      fast_drift = 0.0
+    momentum_sign = np.sign(fast_drift)
+    pattern_sign = 1 if direction_hint == "bullish" else -1
+
     for d in forecast_dates:
-      bias = atr * 0.25 if direction_hint == "bullish" else -atr * 0.25
-      open_price = round(last_close_price, 2)
-      close_price = round(open_price + bias, 2)
-      high_price = round(max(open_price, close_price) + atr * 0.25, 2)
-      low_price = round(min(open_price, close_price) - atr * 0.25, 2)
+      # --- Adaptive bias direction & magnitude ---------------------------
+      alignment = momentum_sign * pattern_sign  # +1 aligned, –1 opposed, 0 flat
+
+      # 1) Pick driving direction
+      if alignment < 0 and abs(fast_drift) > 0.05 * atr:
+        drive_sign = momentum_sign  # follow momentum if strongly opposite
+      else:
+        drive_sign = pattern_sign
+
+      # 2) Magnitude: larger of |fast_drift| and 0.05 ATR
+      base_mag = max(abs(fast_drift), 0.05 * atr)
+
+      # Reduce size when forces fight each other
+      if alignment == 0:
+        base_mag *= 0.6
+      elif alignment < 0:
+        base_mag *= 0.8
+
+      bias = drive_sign * base_mag
+
+      # 3) EMA overlay—only if same sign, max 0.25 ATR
+      ema_fast = df["Close"].ewm(span=3).mean().iloc[-1]
+      ema_slow = df["Close"].ewm(span=10).mean().iloc[-1]
+      ema_shift = np.clip((ema_fast - ema_slow) / atr if atr else 0.0, -0.25,
+                          0.25) * atr
+      if np.sign(ema_shift) == np.sign(bias):
+        bias += ema_shift
+
+      # --- Realistic intra-bar offsets derived from recent bars -------
+      recent = df.tail(10)
+      up_offsets = (
+          recent["High"] - recent[["Open", "Close"]].max(axis=1)).abs()
+      dn_offsets = (recent[["Open", "Close"]].min(axis=1) - recent["Low"]).abs()
+      median_up = up_offsets.median() if not up_offsets.empty else 0.3 * atr
+      median_dn = dn_offsets.median() if not dn_offsets.empty else 0.3 * atr
+
+      # Bias the range toward the driving direction
+      if drive_sign > 0:  # bullish bias → slightly larger high offset
+        hi_off = 1.1 * median_up
+        lo_off = 0.9 * median_dn
+      else:  # bearish
+        hi_off = 0.9 * median_up
+        lo_off = 1.1 * median_dn
+
+      # --- Price construction ---------------------------------------
+      open_price = q(last_close_price)
+      close_price = q(open_price + bias)
+
+      high_price = q(max(open_price, close_price) + hi_off)
+      low_price = q(min(open_price, close_price) - lo_off)
+
+      # Guarantee OHLC consistency
+      if low_price > open_price:
+        low_price = q(open_price - tick)
+      if high_price < close_price:
+        high_price = q(close_price + tick)
+
       bars.append({"Date": d.strftime("%Y-%m-%d"), "Open": open_price,
-        "High": high_price, "Low": low_price, "Close": close_price, })
-      last_close_price = close_price  # next bar opens at prior close
+                   "High": high_price, "Low": low_price,
+                   "Close": close_price, })
+
+      last_close_price = close_price  # feed forward
 
     forecast_window = pd.DataFrame(bars)
 
     # String-format OHLC for nice printing
     ohlc = [{"date": row["Date"], "open": f"{row['Open']:.2f}",
-      "high": f"{row['High']:.2f}", "low": f"{row['Low']:.2f}",
-      "close": f"{row['Close']:.2f}", } for _, row in
-      forecast_window.iterrows()]
+             "high": f"{row['High']:.2f}", "low": f"{row['Low']:.2f}",
+             "close": f"{row['Close']:.2f}", } for _, row in
+            forecast_window.iterrows()]
 
     next_patterns.append({"start_date": forecast_window.iloc[0]["Date"],
-      "end_date": forecast_window.iloc[-1]["Date"],
-      "expected_pattern": expected_pattern, "confidence": confidence,
-      "forecast_ohlc": ohlc, })
+                          "end_date": forecast_window.iloc[-1]["Date"],
+                          "expected_pattern": expected_pattern,
+                          "confidence": confidence, "forecast_ohlc": ohlc, })
 
   # -------------------------------------------------
   # 4) Return structured results
   # -------------------------------------------------
   return {"patterns": results, "equity_curve": equity_curve,
-    "backtest_summary": backtest_summary, "next_predictions": next_patterns, }
+          "backtest_summary": backtest_summary,
+          "next_predictions": next_patterns, }
 
 
 # --------------------------------------------------------------------- #
@@ -691,9 +766,9 @@ def _label_patterns(df: pd.DataFrame, patterns: List[Dict]) -> List[Dict]:
   for p in patterns:
     # Duplicate check
     duplicate = any((p["pattern"] == q["pattern"]) and not (
-          pd.to_datetime(p["end_date"]) < pd.to_datetime(
-          q["start_date"]) or pd.to_datetime(p["start_date"]) > pd.to_datetime(
-          q["end_date"])) for q in labelled)
+        pd.to_datetime(p["end_date"]) < pd.to_datetime(
+        q["start_date"]) or pd.to_datetime(p["start_date"]) > pd.to_datetime(
+        q["end_date"])) for q in labelled)
     if duplicate:
       p["status"] = "Duplicate"
       labelled.append(p)
@@ -703,3 +778,288 @@ def _label_patterns(df: pd.DataFrame, patterns: List[Dict]) -> List[Dict]:
     p["status"] = "Confirmed" if _breakout_confirmed(df, p) else "Partial"
     labelled.append(p)
   return labelled
+
+
+def forecast_next_days(historical_data, days=2):
+  """
+  Generate OHLC forecasts for the next `days` days based on historical OHLC data.
+
+  Parameters:
+      historical_data (DataFrame or list-like): Historical OHLC data. It can be a pandas DataFrame
+          with columns ['Open','High','Low','Close'], or a list of dicts/tuples in that order.
+      days (int): Number of future days to forecast.
+
+  Returns:
+      List[dict]: A list of forecasted OHLC values for the next days, where each entry is a dict
+      with keys 'Open','High','Low','Close'.
+  """
+  # Extract OHLC series from the input data
+  if hasattr(historical_data, "iloc"):  # pandas DataFrame support
+    opens = historical_data["Open"].tolist()
+    highs = historical_data["High"].tolist()
+    lows = historical_data["Low"].tolist()
+    closes = historical_data["Close"].tolist()
+  else:
+    # Assume list of dict or tuple/list in OHLC order
+    opens = [];
+    highs = [];
+    lows = [];
+    closes = []
+    for record in historical_data:
+      if isinstance(record, dict):
+        opens.append(record.get("Open") or record.get("open"))
+        highs.append(record.get("High") or record.get("high"))
+        lows.append(record.get("Low") or record.get("low"))
+        closes.append(record.get("Close") or record.get("close"))
+      else:
+        # Assume tuple or list [Open, High, Low, Close]
+        try:
+          o, h, l, c = record
+        except Exception:
+          raise ValueError("Unsupported data format for historical_data")
+        opens.append(o);
+        highs.append(h);
+        lows.append(l);
+        closes.append(c)
+  if len(closes) == 0:
+    return []
+
+  forecaster = _OHLCForecaster(opens, highs, lows, closes)
+  return forecaster.predict(days)
+
+def refine_next_predictions(results: Dict[str, any],
+    df: pd.DataFrame,
+    days: int = 1,
+    weight_pattern: float = 0.3,
+    weight_volatility: float = 0.7
+) -> Dict[str, any]:
+  """
+  Combine the pattern-biased forecast from `analyze_patterns` with a
+  pure volatility/ATR forecast (from `forecast_next_days`) to generate
+  a more realistic OHLC prediction.
+
+  Parameters
+  ----------
+  results : dict
+      The full results structure returned by `analyze_patterns`.
+      Must contain results["next_predictions"].
+  df : pd.DataFrame
+      The historical OHLC dataframe used for the first pass.
+  days : int
+      Number of future days to forecast (defaults to 2).
+  weight_pattern : float
+      Weight assigned to the pattern-biased forecast (0-1).
+  weight_volatility : float
+      Weight assigned to the pure volatility forecast (0-1).
+      `weight_pattern + weight_volatility` should sum to 1.
+
+  Returns
+  -------
+  Dict[str, any]
+      Same `results` object, augmented with
+      `results["next_predictions_refined"]`.
+  """
+  if "next_predictions" not in results or not results["next_predictions"]:
+    # Nothing to refine – just copy the field so caller logic is consistent
+    results["next_predictions_refined"] = results.get("next_predictions", [])
+    return results
+
+  # --- Build volatility-driven baseline forecast --------------------
+  baseline = forecast_next_days(df.tail(30), days)   # 30-bar window
+
+  # Convert first-pass pattern forecast to numeric form
+  patt_raw = results["next_predictions"][0].get("forecast_ohlc", [])
+  if not patt_raw:
+    # Fall back to baseline only
+    results["next_predictions_refined"] = baseline
+    return results
+
+  pattern_cast = []
+  for rec in patt_raw:
+    # stored as strings; convert to floats
+    pattern_cast.append(
+        dict(Open=float(rec["open"]),
+             High=float(rec["high"]),
+             Low=float(rec["low"]),
+             Close=float(rec["close"]))
+    )
+
+  # --- Blend the forecasts -----------------------------------------
+  refined = []
+  prev_close = df["Close"].iloc[-1]   # ensure Open = prev Close constraint
+  for i in range(days):
+    # Safety in case forecasts differ in length
+    p = pattern_cast[min(i, len(pattern_cast)-1)]
+    v = baseline[min(i, len(baseline)-1)]
+
+    open_price = prev_close
+    high_price = (weight_pattern * p["High"] +
+                  weight_volatility * v["High"])
+    low_price  = (weight_pattern * p["Low"] +
+                  weight_volatility * v["Low"])
+    close_price = (weight_pattern * p["Close"] +
+                   weight_volatility * v["Close"])
+
+    # Enforce logical OHLC ordering
+    high_price = max(high_price, open_price, close_price)
+    low_price  = min(low_price, open_price, close_price)
+
+    # Round to 2 decimals for consistency
+    refined.append(dict(Open=round(open_price, 2),
+                        High=round(high_price, 2),
+                        Low=round(low_price, 2),
+                        Close=round(close_price, 2)))
+    prev_close = refined[-1]["Close"]
+
+  # Attach to the results dictionary
+  results["next_predictions_refined"] = refined
+  return results
+
+
+class _OHLCForecaster:
+  """Helper class to forecast OHLC values for future days based on recent history."""
+
+  def __init__(self, opens, highs, lows, closes):
+    self.opens = opens
+    self.highs = highs
+    self.lows = lows
+    self.closes = closes
+    # Pre-compute initial True Ranges and ATR for volatility measures
+    self._tr_history = []
+    for i in range(1, len(closes)):
+      prev_close = closes[i - 1]
+      tr = max(highs[i] - lows[i], abs(highs[i] - prev_close),
+               abs(lows[i] - prev_close))
+      self._tr_history.append(tr)
+    # Use last 14 TR values (or fewer if not available) to initialize ATR
+    period = 14
+    recent_trs = self._tr_history[-period:] if len(
+        self._tr_history) >= period else self._tr_history
+    self._atr = statistics.mean(recent_trs) if recent_trs else 0.0
+    # Store recent close-to-open changes (close - previous close, since open=prev close)
+    # which is effectively (close - open) for each day given open = prev close
+    self._daily_changes = [c - o for o, c in zip(opens, closes)]
+    # Keep last day’s range for shock adjustments
+    if highs and lows:
+      self._last_range = highs[-1] - lows[-1]
+    else:
+      self._last_range = 0.0
+
+  def predict(self, days=1):
+    """Predict the next `days` OHLC values. Returns a list of dicts."""
+    forecasts = []
+    for _ in range(days):
+      # Previous close is the next open
+      prev_close = self.closes[-1]
+      open_price = prev_close
+      # Determine predicted close change using recent momentum
+      predicted_change = 0.0
+      if len(self._daily_changes) > 0:
+        last_change = self._daily_changes[-1]
+        # If the last change was an outlier (e.g. huge drop/spike), use a longer window average
+        if self._atr > 0 and abs(last_change) > 1.5 * self._atr:
+          window = min(10, len(self._daily_changes))
+          predicted_change = statistics.mean(
+              self._daily_changes[-window:]) if window > 0 else 0.0
+        else:
+          window = min(5, len(self._daily_changes))
+          predicted_change = statistics.mean(
+              self._daily_changes[-window:]) if window > 0 else 0.0
+      # Forecasted close
+      close_price = open_price + predicted_change
+
+      # Forecasted range (High-Low) using ATR and last range "shock" adjustment
+      # Blend current ATR with last observed range to adapt to volatility regime
+      if self._atr is None:
+        self._atr = 0.0
+      # Shock factor: higher value gives more weight to last_range (recent volatility)
+      shock_factor = 0.9
+      predicted_range = self._atr + (
+          self._last_range - self._atr) * shock_factor
+      if predicted_range < 0:
+        predicted_range = -predicted_range
+      # Ensure a minimum range (to avoid zero range predictions)
+      if predicted_range < 1e-4:
+        predicted_range = 1e-4
+      # Ensure the range covers the net change (with a 10% buffer for intraday swings)
+      if abs(predicted_change) > predicted_range:
+        predicted_range = abs(predicted_change) * 1.1
+
+      # Determine High and Low based on predicted range and day type (up or down)
+      high_price = None
+      low_price = None
+      if close_price >= open_price:
+        # Predicted up-day (including flat case)
+        net_move = close_price - open_price  # D = upward movement
+        R = predicted_range
+        r = net_move / R if R != 0 else 0.0  # fraction of range that is net move
+        # Estimate pullback fraction: how far off the high the close will be
+        if r <= 0.3:
+          pullback_frac = 0.5  # small net move -> likely mid-range close (significant pullback)
+        elif r >= 0.7:
+          # very strong up move -> close near high (minimal pullback)
+          pullback_frac = 0.1 * ((1 - r) / 0.3) if r < 1.0 else 0.0
+        else:
+          # interpolate between 0.5 and 0.1 as r goes from 0.3 to 0.7
+          frac_progress = (r - 0.3) / 0.4
+          pullback_frac = 0.5 + (0.1 - 0.5) * frac_progress
+        pullback_frac = max(0.0, min(0.5, pullback_frac))
+        # High and Low computation for up day
+        high_price = close_price + pullback_frac * R
+        low_price = high_price - R
+      else:
+        # Predicted down-day
+        net_move = open_price - close_price  # D = downward movement
+        R = predicted_range
+        r = net_move / R if R != 0 else 0.0
+        # Estimate bounce fraction: how far off the low the close will be
+        if r <= 0.3:
+          bounce_frac = 0.5  # small net move -> likely close mid-range (significant bounce off low)
+        elif r >= 0.7:
+          # very strong down move -> close near low (minimal bounce)
+          bounce_frac = 0.1 * ((1 - r) / 0.3) if r < 1.0 else 0.0
+        else:
+          # interpolate between 0.5 and 0.1 as r goes from 0.3 to 0.7
+          frac_progress = (r - 0.3) / 0.4
+          bounce_frac = 0.5 + (0.1 - 0.5) * frac_progress
+        bounce_frac = max(0.0, min(0.5, bounce_frac))
+        # High and Low computation for down day
+        low_price = close_price - bounce_frac * R
+        high_price = low_price + R
+
+      # Final safety check: ensure logical ordering of Open, High, Low, Close
+      high_price = max(high_price, open_price, close_price)
+      low_price = min(low_price, open_price, close_price)
+
+      # Round results (if desired, to 2 decimal places for price)
+      open_price = round(open_price, 2)
+      high_price = round(high_price, 2)
+      low_price = round(low_price, 2)
+      close_price = round(close_price, 2)
+
+      # Append forecast
+      forecasts.append(
+          {"Open": open_price, "High": high_price, "Low": low_price,
+           "Close": close_price})
+
+      # Update internal state for multi-day forecasting
+      # Append the new values to history for subsequent day predictions
+      self.opens.append(open_price);
+      self.highs.append(high_price)
+      self.lows.append(low_price);
+      self.closes.append(close_price)
+      # Update daily change list (close - open)
+      self._daily_changes.append(close_price - open_price)
+      # Update last range and ATR (use new predicted day as if it were actual)
+      self._last_range = high_price - low_price
+      new_tr = self._last_range  # since we treat predicted open == prev close, true range = high-low
+      self._tr_history.append(new_tr)
+      if len(self._tr_history) > 14:
+        # maintain last 14 TR values
+        self._tr_history.pop(0)
+      # Recalculate ATR as simple moving average of TR_history
+      self._atr = statistics.mean(self._tr_history) if self._tr_history else 0.0
+
+    return forecasts
+
+
