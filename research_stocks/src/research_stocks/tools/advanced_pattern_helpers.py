@@ -9,6 +9,14 @@ import numpy as np
 import pandas as pd
 from scipy.stats import linregress
 
+def ensure_pattern_dates_are_datetime(patterns):
+  for p in patterns:
+    if isinstance(p.get('start_date'), str):
+      p['start_date'] = pd.to_datetime(p['start_date'])
+    if isinstance(p.get('end_date'), str):
+      p['end_date'] = pd.to_datetime(p['end_date'])
+  return patterns
+
 
 def slope(series: pd.Series) -> float:
   """
@@ -617,6 +625,8 @@ def backtest_pattern_strategy(df: pd.DataFrame, patterns: List[Dict],
   position_size = 0
   equity_curve = []
 
+  patterns = ensure_pattern_dates_are_datetime(patterns)
+  df['Date'] = pd.to_datetime(df['Date'])
   for i, row in df.iterrows():
     date = row['Date']
     price = row['Close']
@@ -650,6 +660,8 @@ def export_analysis_results(results: Dict[str, any],
 
   # Ensure 'status' column is included in both CSV and JSON
   patterns_df = pd.DataFrame(results["patterns"])
+  patterns_df["start_date"] = patterns_df["start_date"].astype(str)
+  patterns_df["end_date"] = patterns_df["end_date"].astype(str)
   patterns_df.to_csv(f"{output_dir}/detected_patterns.csv", index=False)
   with open(f"{output_dir}/detected_patterns.json", "w") as f:
     json.dump(patterns_df.to_dict(orient="records"), f, indent=2)
@@ -657,7 +669,9 @@ def export_analysis_results(results: Dict[str, any],
   pd.DataFrame(results["equity_curve"]).to_csv(f"{output_dir}/equity_curve.csv",
                                                index=False)
   with open(f"{output_dir}/equity_curve.json", "w") as f:
-    json.dump(results["equity_curve"].to_dict(orient="records"), f, indent=2)
+    equity_df = results["equity_curve"]
+    equity_df["Date"] = equity_df["Date"].astype(str)
+    json.dump(equity_df.to_dict(orient="records"), f, indent=2)
 
   pd.DataFrame(results["next_predictions"]).to_csv(
       f"{output_dir}/next_predictions.csv", index=False)
@@ -672,10 +686,30 @@ def export_analysis_results(results: Dict[str, any],
 
   # --- cache the full results structure for quick reuse ---------------
   with open(f"{output_dir}/results_cache.json", "w") as f:
-    # Ensure all dates are stringified for safe JSON serialization
+    def convert(obj):
+      if isinstance(obj, dict):
+        return {k: convert(v) for k, v in obj.items()}
+      elif isinstance(obj, list):
+        return [convert(v) for v in obj]
+      elif isinstance(obj, pd.Timestamp):
+        return obj.strftime("%Y-%m-%d")
+      return obj
+
     cache = results.copy()
-    cache["equity_curve"] = cache["equity_curve"].to_dict(orient="records")
-    # next_predictions already string‑dates; patterns fine
+    for k, v in cache.items():
+      if isinstance(v, pd.DataFrame):
+        cache[k] = v.to_dict(orient="records")
+
+    def convert(obj):
+      if isinstance(obj, dict):
+        return {k: convert(v) for k, v in obj.items()}
+      elif isinstance(obj, list):
+        return [convert(v) for v in obj]
+      elif isinstance(obj, pd.Timestamp):
+        return obj.strftime("%Y-%m-%d")
+      return obj
+
+    cache = convert(cache)
     json.dump(cache, f, indent=2)
 
 
@@ -701,31 +735,26 @@ def plot_analysis_results(results: Dict[str, any]):
           f"- {row['start_date']} to {row['end_date']}: {row['expected_pattern']} (Confidence: {row['confidence']})")
 
 
-def print_summary_report(results: Dict[str, any]):
+def print_summary_report(results: Dict[str, any], show_forecast: bool = True):
   print("\n🧠 Pattern Recognition Summary:")
   # Show up to the last 12 patterns so single‑bar formations are visible
   for pattern in results["patterns"][-12:]:
     print(
         f"- {pattern['start_date']} to {pattern['end_date']}: {pattern['pattern']} ({pattern['direction']}, score={pattern['value']}, status={pattern.get('status', '?')})")
+  if show_forecast:
+    if results["next_predictions"]:
+      print("\n🔮 Forecast:")
+      for pred in results["next_predictions"]:
+        print(
+            f"- {pred['start_date']} to {pred['end_date']}: {pred['expected_pattern']} (Confidence: {pred['confidence']})")
+        if "forecast_ohlc" in pred:
+          print("  OHLC Forecast:")
+          for day in pred["forecast_ohlc"]:
+            print(f"    • {day['date']}: "
+                  f"O={day['open']} H={day['high']} L={day['low']} C={day['close']}")
+    else:
+      print("\n🔮 No strong pattern forecast for the next 2 days.")
 
-  print("\n💰 Backtest Summary:")
-  b = results["backtest_summary"]
-  print(
-      f"Start Equity: ${b['start_equity']:.2f} → End Equity: ${b['end_equity']:.2f} "
-      f"(Net PnL: ${b['net_pnl']:.2f})")
-
-  if results["next_predictions"]:
-    print("\n🔮 Forecast for Next 2 Days:")
-    for pred in results["next_predictions"]:
-      print(
-          f"- {pred['start_date']} to {pred['end_date']}: {pred['expected_pattern']} (Confidence: {pred['confidence']})")
-      if "forecast_ohlc" in pred:
-        print("  OHLC Forecast:")
-        for day in pred["forecast_ohlc"]:
-          print(f"    • {day['date']}: "
-                f"O={day['open']} H={day['high']} L={day['low']} C={day['close']}")
-  else:
-    print("\n🔮 No strong pattern forecast for the next 2 days.")
 
 
 def analyze_patterns(df: pd.DataFrame, window: int = 5,
@@ -892,6 +921,13 @@ def analyze_patterns(df: pd.DataFrame, window: int = 5,
           "backtest_summary": backtest_summary,
           "next_predictions": next_patterns, }
 
+def generate_evolving_daily_ohlc(intraday_df):
+  return {
+    "Open": intraday_df.iloc[0]['Open'],
+    "High": intraday_df['High'].max(),
+    "Low": intraday_df['Low'].min(),
+    "Close": intraday_df.iloc[-1]['Close']
+  }
 
 # --------------------------------------------------------------------- #
 # Post‑detection validation helpers                                      #
