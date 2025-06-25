@@ -21,6 +21,164 @@ def slope(series: pd.Series) -> float:
   y = series.values.astype(float)
   return linregress(x, y).slope
 
+# --------------------------------------------------------------------- #
+#  CANDLESTICK PATTERN DETECTORS  – ported from EODHD article            #
+#  Each returns a boolean Series aligned to df.index.                    #
+# --------------------------------------------------------------------- #
+def _prep(df: pd.DataFrame) -> pd.DataFrame:
+  """Lower-case a copy so detectors match original article exactly."""
+  return df[["Open","High","Low","Close"]].rename(
+      columns=str.lower).fillna(0.0)
+
+def cs_hammer(df):  # bullish
+  d = _prep(df)
+  return (
+      ((d["high"] - d["low"]) > 3 * (d["open"] - d["close"])) &
+      (((d["close"] - d["low"]) / (0.001 + d["high"] - d["low"])) > 0.6) &
+      (((d["open"]  - d["low"]) / (0.001 + d["high"] - d["low"])) > 0.6)
+  )
+
+def cs_inverted_hammer(df):  # bullish
+  d = _prep(df)
+  return (
+      ((d["high"] - d["low"]) > 3 * (d["open"] - d["close"])) &
+      ((d["high"] - d["close"]) / (0.001 + d["high"] - d["low"]) > 0.6) &
+      ((d["high"] - d["open"])  / (0.001 + d["high"] - d["low"]) > 0.6)
+  )
+
+def cs_shooting_star(df):    # bearish
+  d = _prep(df)
+  return (
+      ((d["open"].shift(1) < d["close"].shift(1)) & (d["close"].shift(1) < d["open"])) &
+      (d["high"] - np.maximum(d["open"], d["close"]) >= (abs(d["open"] - d["close"]) * 3)) &
+      ((np.minimum(d["close"], d["open"]) - d["low"]) <= abs(d["open"] - d["close"]))
+  )
+
+def cs_hanging_man(df):      # bearish
+  d = _prep(df)
+  return (
+      ((d["high"] - d["low"]) > (4 * (d["open"] - d["close"]))) &
+      (((d["close"] - d["low"]) / (0.001 + d["high"] - d["low"])) >= 0.75) &
+      (((d["open"]  - d["low"]) / (0.001 + d["high"] - d["low"])) >= 0.75) &
+      (d["high"].shift(1) < d["open"]) &
+      (d["high"].shift(2) < d["open"])
+  )
+
+def cs_doji(df):  # neutral
+  d = _prep(df)
+  return (
+      ((abs(d["close"] - d["open"]) / (d["high"] - d["low"])) < 0.1) &
+      ((d["high"] - np.maximum(d["close"], d["open"])) > (3 * abs(d["close"] - d["open"]))) &
+      ((np.minimum(d["close"], d["open"]) - d["low"]) > (3 * abs(d["close"] - d["open"])))
+  )
+
+
+# ------------------------------------------------------------------ #
+#  MULTI‑BAR CANDLESTICK DETECTORS                                   #
+#  All logic mirrors the EODHD Medium article heuristics.            #
+# ------------------------------------------------------------------ #
+def cs_three_white_soldiers(df):
+    d = _prep(df)
+    b1 = (d["close"].shift(2) > d["open"].shift(2))
+    b2 = (d["close"].shift(1) > d["open"].shift(1))
+    b3 = (d["close"] > d["open"])
+    # each opens within body of prior and closes higher
+    o2_in_body1 = (d["open"].shift(1) < d["close"].shift(2)) & (d["open"].shift(1) > d["open"].shift(2))
+    o3_in_body2 = (d["open"] < d["close"].shift(1)) & (d["open"] > d["open"].shift(1))
+    c2_gt_c1 = d["close"].shift(1) > d["close"].shift(2)
+    c3_gt_c2 = d["close"] > d["close"].shift(1)
+    return b1 & b2 & b3 & o2_in_body1 & o3_in_body2 & c2_gt_c1 & c3_gt_c2
+
+def cs_three_black_crows(df):
+    d = _prep(df)
+    r1 = (d["close"].shift(2) < d["open"].shift(2))
+    r2 = (d["close"].shift(1) < d["open"].shift(1))
+    r3 = (d["close"] < d["open"])
+    o2_in_body1 = (d["open"].shift(1) > d["close"].shift(2)) & (d["open"].shift(1) < d["open"].shift(2))
+    o3_in_body2 = (d["open"] > d["close"].shift(1)) & (d["open"] < d["open"].shift(1))
+    c2_lt_c1 = d["close"].shift(1) < d["close"].shift(2)
+    c3_lt_c2 = d["close"] < d["close"].shift(1)
+    return r1 & r2 & r3 & o2_in_body1 & o3_in_body2 & c2_lt_c1 & c3_lt_c2
+
+def cs_morning_star(df):
+    d = _prep(df)
+    day1 = d["close"].shift(2) < d["open"].shift(2)  # long bearish
+    day2_gap = d["open"].shift(1) < d["close"].shift(2)
+    day2_small = abs(d["close"].shift(1) - d["open"].shift(1)) / (d["high"].shift(1) - d["low"].shift(1) + 1e-6) < 0.3
+    day3 = d["close"] > d["open"]
+    close_into = d["close"] > (d["open"].shift(2) + d["close"].shift(2)) / 2
+    return day1 & day2_gap & day2_small & day3 & close_into
+
+def cs_evening_star(df):
+    d = _prep(df)
+    day1 = d["close"].shift(2) > d["open"].shift(2)  # long bullish
+    day2_gap = d["open"].shift(1) > d["close"].shift(2)
+    day2_small = abs(d["close"].shift(1) - d["open"].shift(1)) / (d["high"].shift(1) - d["low"].shift(1) + 1e-6) < 0.3
+    day3 = d["close"] < d["open"]
+    close_into = d["close"] < (d["open"].shift(2) + d["close"].shift(2)) / 2
+    return day1 & day2_gap & day2_small & day3 & close_into
+
+def cs_bullish_harami(df):
+    d = _prep(df)
+    prev_bear = d["close"].shift(1) < d["open"].shift(1)
+    small_bull = d["close"] > d["open"]
+    open_in_prev = (d["open"] > d["close"].shift(1)) & (d["open"] < d["open"].shift(1))
+    close_in_prev = (d["close"] > d["close"].shift(1)) & (d["close"] < d["open"].shift(1))
+    return prev_bear & small_bull & open_in_prev & close_in_prev
+
+def cs_bearish_harami(df):
+    d = _prep(df)
+    prev_bull = d["close"].shift(1) > d["open"].shift(1)
+    small_bear = d["close"] < d["open"]
+    open_in_prev = (d["open"] < d["close"].shift(1)) & (d["open"] > d["open"].shift(1))
+    close_in_prev = (d["close"] < d["close"].shift(1)) & (d["close"] > d["open"].shift(1))
+    return prev_bull & small_bear & open_in_prev & close_in_prev
+
+def cs_piercing_pattern(df):
+    d = _prep(df)
+    first_bear = d["close"].shift(1) < d["open"].shift(1)
+    gap_down = d["open"] < d["low"].shift(1)
+    close_above_mid = d["close"] > (d["open"].shift(1) + d["close"].shift(1)) / 2
+    close_below_open1 = d["close"] < d["open"].shift(1)
+    return first_bear & (d["close"] > d["open"]) & gap_down & close_above_mid & close_below_open1
+
+def cs_dark_cloud_cover(df):
+    d = _prep(df)
+    first_bull = d["close"].shift(1) > d["open"].shift(1)
+    gap_up = d["open"] > d["high"].shift(1)
+    close_below_mid = d["close"] < (d["open"].shift(1) + d["close"].shift(1)) / 2
+    close_above_open1 = d["close"] > d["open"].shift(1)
+    return first_bull & (d["close"] < d["open"]) & gap_up & close_below_mid & close_above_open1
+
+def detect_candlestick_patterns(df: pd.DataFrame) -> List[Dict]:
+  """Wrapper to scan for the single-bar candlestick patterns above."""
+  patterns = []
+  mapping = {
+    "Hammer":           (cs_hammer, "bullish"),
+    "Inverted Hammer":  (cs_inverted_hammer, "bullish"),
+    "Shooting Star":    (cs_shooting_star, "bearish"),
+    "Hanging Man":      (cs_hanging_man, "bearish"),
+    "Doji":             (cs_doji, "neutral"),
+    "Three White Soldiers": (cs_three_white_soldiers, "bullish"),
+    "Three Black Crows":    (cs_three_black_crows,  "bearish"),
+    "Morning Star":         (cs_morning_star,       "bullish"),
+    "Evening Star":         (cs_evening_star,       "bearish"),
+    "Bullish Harami":       (cs_bullish_harami,     "bullish"),
+    "Bearish Harami":       (cs_bearish_harami,     "bearish"),
+    "Piercing Pattern":     (cs_piercing_pattern,   "bullish"),
+    "Dark Cloud Cover":     (cs_dark_cloud_cover,   "bearish"),
+  }
+  for name, (func, direction) in mapping.items():
+    mask = func(df)
+    idxs = np.where(mask)[0]
+    for i in idxs:
+      date = df.iloc[i]["Date"]
+      patterns.append({"start_date": date,
+                       "end_date": date,
+                       "pattern": name,
+                       "direction": direction,
+                       "value": 60})  # base score; will be re-scored
+  return patterns
 
 def detect_pivots(df: pd.DataFrame, left: int = 3, right: int = 3,
     min_diff: float = 0.005, tolerate_equal: bool = True) -> pd.DataFrame:
@@ -397,26 +555,50 @@ def detect_double_bottom_raw(df: pd.DataFrame, window: int = 5,
   return patterns
 
 
-def calculate_pattern_score(pattern: dict, df: pd.DataFrame,
-    volume_col: str = None) -> float:
-  duration = (pd.to_datetime(pattern["end_date"]) - pd.to_datetime(
-      pattern["start_date"])).days
+def calculate_pattern_score(pattern: dict, df: pd.DataFrame, volume_col: str = None) -> float:
+  duration = (pd.to_datetime(pattern["end_date"]) -
+              pd.to_datetime(pattern["start_date"])).days
+  if duration == 0:
+    duration = 1
+
   volume_score = 0
-  if volume_col and volume_col in df.columns:
-    segment = df.loc[(df["Date"] >= pattern["start_date"]) & (
-        df["Date"] <= pattern["end_date"])]
+  segment = df.loc[(df["Date"] >= pattern["start_date"]) & (df["Date"] <= pattern["end_date"])]
+  if volume_col and volume_col in df.columns and not segment.empty:
     avg_volume = segment[volume_col].mean()
     breakout_volume = segment[volume_col].iloc[-1]
-    volume_score = (
-                       breakout_volume - avg_volume) / avg_volume * 100 if avg_volume else 0
-  breakout_strength = abs(
-      df[df['Date'] == pattern['end_date']]['Close'].values[0] -
-      df[df['Date'] == pattern['start_date']]['Close'].values[0])
-  score = (0.3 * min(duration, 30) / 30 * 100 + 0.3 * max(0, min(volume_score,
-                                                                 100)) + 0.4 * min(
-      breakout_strength / df['Close'].mean() * 100, 100))
-  return round(score, 2)
+    if avg_volume:
+      volume_score = (breakout_volume - avg_volume) / avg_volume * 100
 
+  close_start = df.loc[df['Date'] == pattern['start_date'], 'Close']
+  close_end = df.loc[df['Date'] == pattern['end_date'], 'Close']
+  if close_start.empty or close_end.empty:
+    return 0.0  # fallback if data missing
+
+  breakout_strength = abs(close_end.values[0] - close_start.values[0])
+  avg_close = df['Close'].mean() if not df['Close'].empty else 1.0
+
+  score = (
+      0.3 * min(duration, 30) / 30 * 100 +
+      0.3 * max(0, min(volume_score, 100)) +
+      0.4 * min(breakout_strength / avg_close * 100, 100)
+  )
+
+  # Make the scoring pattern-aware
+  pattern_weights = {
+    'Doji': 0.5,
+    'Hammer': 1.0,
+    'Shooting Star': 1.0,
+    'Morning Star': 1.2,
+    'Three White Soldiers': 1.3,
+    'Double Bottom': 1.5,
+    'Inverse Head and Shoulders': 1.6,
+    'Head and Shoulders': 1.6,
+    'Double Top': 1.5,
+  }
+  weight = pattern_weights.get(pattern["pattern"], 1.0)
+  score *= weight
+
+  return round(score, 2)
 
 def resolve_conflicts(patterns: List[Dict]) -> List[Dict]:
   grouped_by_time = {}
@@ -521,7 +703,8 @@ def plot_analysis_results(results: Dict[str, any]):
 
 def print_summary_report(results: Dict[str, any]):
   print("\n🧠 Pattern Recognition Summary:")
-  for pattern in results["patterns"][-5:]:
+  # Show up to the last 12 patterns so single‑bar formations are visible
+  for pattern in results["patterns"][-12:]:
     print(
         f"- {pattern['start_date']} to {pattern['end_date']}: {pattern['pattern']} ({pattern['direction']}, score={pattern['value']}, status={pattern.get('status', '?')})")
 
@@ -569,6 +752,7 @@ def analyze_patterns(df: pd.DataFrame, window: int = 5,
   results += detect_wedge_patterns_slope(df, window)
   results += detect_channel_patterns_slope(df, window)
   results += detect_engulfing_patterns(df)
+  results += detect_candlestick_patterns(df)
   results += detect_inverse_head_shoulders_raw(df)
   results += detect_ascending_triangle_raw(df)
   results += detect_double_bottom_raw(df)
@@ -591,125 +775,115 @@ def analyze_patterns(df: pd.DataFrame, window: int = 5,
                             "Equity"]), }
 
   # -------------------------------------------------
-  # 3) 2-day forecast (sequential bars)
+  # 3) 1-day forecast (sequential bars)
   # -------------------------------------------------
   next_patterns: List[Dict] = []
-  if results:
-    recent_patterns = results[-3:]
-    strongest = max(recent_patterns,
-                    key=lambda p: p["value"]) if recent_patterns else None
-    direction_hint = strongest["direction"] if strongest else "bullish"
-    expected_pattern = (
-      "Bullish Continuation" if direction_hint == "bullish" else "Downtrend Continuation")
-    confidence = "High" if strongest and strongest[
-      "value"] >= 70 else "Moderate"
+  if not results or df.empty:
+    return next_patterns
 
-    # ATR over the last ≤5 bars
-    atr_period = min(5, len(df))
-    atr = (df["High"].tail(atr_period) - df["Low"].tail(atr_period)).mean()
+  recent_patterns = results[-3:]
+  strongest = max(recent_patterns, key=lambda p: p["value"]) if recent_patterns else None
+  direction_hint = strongest["direction"] if strongest else "bullish"
+  expected_pattern = "Bullish Continuation" if direction_hint == "bullish" else "Downtrend Continuation"
 
-    # Next two weekday dates
-    forecast_dates: List[pd.Timestamp] = []
-    curr_date = pd.to_datetime(df["Date"].max())
-    while len(forecast_dates) < 1:
-      curr_date += timedelta(days=1)
-      if curr_date.weekday() < 5:  # Monday-Friday only
-        forecast_dates.append(curr_date)
+  if strongest:
+    score = strongest["value"]
+    confidence = "Very High" if score > 80 else "High" if score >= 70 else "Moderate" if score >= 50 else "Low"
+  else:
+    confidence = "Moderate"
 
-    # ---- sequential bar construction with momentum & ATR logic --------
-    tick = 0.05  # price is rounded to the nearest 5 ¢
+  # True ATR: includes gaps
+  df["prev_close"] = df["Close"].shift(1)
+  df["tr1"] = df["High"] - df["Low"]
+  df["tr2"] = (df["High"] - df["prev_close"]).abs()
+  df["tr3"] = (df["Low"] - df["prev_close"]).abs()
+  df["TR"] = df[["tr1", "tr2", "tr3"]].max(axis=1)
+  atr = df["TR"].tail(5).mean()
 
-    # Helper for tick rounding
-    def q(val: float) -> float:
-      return round(round(val / tick) * tick, 2)
+  # Momentum calculation (5-bar drift)
+  if len(df) >= 6:
+    fast_drift = (df["Close"].iloc[-1] - df["Close"].iloc[-6]) / 5
+  else:
+    fast_drift = 0.0
 
-    bars: List[Dict] = []
-    last_close_price = df["Close"].iloc[-1]
+  momentum_sign = np.sign(fast_drift)
+  pattern_sign = 1 if direction_hint == "bullish" else -1
+  alignment = momentum_sign * pattern_sign
 
-    # Compute short‑term momentum (2‑bar drift) to temper pattern bias
-    if len(df) >= 3:
-      fast_drift = (df["Close"].iloc[-1] - df["Close"].iloc[-3]) / 2
+  # Next weekday
+  forecast_dates = []
+  curr_date = pd.to_datetime(df["Date"].max())
+  while len(forecast_dates) < 1:
+    curr_date += timedelta(days=1)
+    if curr_date.weekday() < 5:
+      forecast_dates.append(curr_date)
+
+  # Short-term EMA
+  ema_fast = df["Close"].ewm(span=3).mean().iloc[-1]
+  ema_slow = df["Close"].ewm(span=10).mean().iloc[-1]
+  ema_diff = ema_fast - ema_slow
+
+  bars = []
+  tick = 0.05
+  q = lambda v: round(round(v / tick) * tick, 2)
+  last_close_price = df["Close"].iloc[-1]
+
+  for d in forecast_dates:
+    if alignment < 0 and abs(fast_drift) > 0.05 * atr:
+      drive_sign = momentum_sign
     else:
-      fast_drift = 0.0
-    momentum_sign = np.sign(fast_drift)
-    pattern_sign = 1 if direction_hint == "bullish" else -1
+      drive_sign = pattern_sign
 
-    for d in forecast_dates:
-      # --- Adaptive bias direction & magnitude ---------------------------
-      alignment = momentum_sign * pattern_sign  # +1 aligned, –1 opposed, 0 flat
+    base_mag = max(abs(fast_drift), 0.05 * atr)
+    base_mag *= 0.6 if alignment == 0 else 0.8 if alignment < 0 else 1.0
+    bias = drive_sign * base_mag
 
-      # 1) Pick driving direction
-      if alignment < 0 and abs(fast_drift) > 0.05 * atr:
-        drive_sign = momentum_sign  # follow momentum if strongly opposite
-      else:
-        drive_sign = pattern_sign
+    # Overlay EMA confirmation
+    if np.sign(ema_diff) == drive_sign:
+      ema_adjustment = np.clip(ema_diff / atr, -0.25, 0.25) * atr
+      bias += ema_adjustment
 
-      # 2) Magnitude: larger of |fast_drift| and 0.05 ATR
-      base_mag = max(abs(fast_drift), 0.05 * atr)
+    # Range based on recent candle behavior
+    recent = df.tail(10)
+    up_offsets = (recent["High"] - recent[["Open", "Close"]].max(axis=1)).abs()
+    dn_offsets = (recent[["Open", "Close"]].min(axis=1) - recent["Low"]).abs()
+    median_up = up_offsets.median() or 0.3 * atr
+    median_dn = dn_offsets.median() or 0.3 * atr
 
-      # Reduce size when forces fight each other
-      if alignment == 0:
-        base_mag *= 0.6
-      elif alignment < 0:
-        base_mag *= 0.8
+    hi_off = 1.1 * median_up if drive_sign > 0 else 0.9 * median_up
+    lo_off = 0.9 * median_dn if drive_sign > 0 else 1.1 * median_dn
 
-      bias = drive_sign * base_mag
+    open_price = q(last_close_price)
+    close_price = q(open_price + bias)
+    high_price = q(max(open_price, close_price) + hi_off)
+    low_price = q(min(open_price, close_price) - lo_off)
 
-      # 3) EMA overlay—only if same sign, max 0.25 ATR
-      ema_fast = df["Close"].ewm(span=3).mean().iloc[-1]
-      ema_slow = df["Close"].ewm(span=10).mean().iloc[-1]
-      ema_shift = np.clip((ema_fast - ema_slow) / atr if atr else 0.0, -0.25,
-                          0.25) * atr
-      if np.sign(ema_shift) == np.sign(bias):
-        bias += ema_shift
+    if low_price > open_price:
+      low_price = q(open_price - tick)
+    if high_price < close_price:
+      high_price = q(close_price + tick)
 
-      # --- Realistic intra-bar offsets derived from recent bars -------
-      recent = df.tail(10)
-      up_offsets = (
-          recent["High"] - recent[["Open", "Close"]].max(axis=1)).abs()
-      dn_offsets = (recent[["Open", "Close"]].min(axis=1) - recent["Low"]).abs()
-      median_up = up_offsets.median() if not up_offsets.empty else 0.3 * atr
-      median_dn = dn_offsets.median() if not dn_offsets.empty else 0.3 * atr
+    bars.append({
+      "Date": d.strftime("%Y-%m-%d"),
+      "Open": open_price,
+      "High": high_price,
+      "Low": low_price,
+      "Close": close_price,
+    })
 
-      # Bias the range toward the driving direction
-      if drive_sign > 0:  # bullish bias → slightly larger high offset
-        hi_off = 1.1 * median_up
-        lo_off = 0.9 * median_dn
-      else:  # bearish
-        hi_off = 0.9 * median_up
-        lo_off = 1.1 * median_dn
+    last_close_price = close_price
 
-      # --- Price construction ---------------------------------------
-      open_price = q(last_close_price)
-      close_price = q(open_price + bias)
+  forecast_window = pd.DataFrame(bars)
+  ohlc = [{"date": row["Date"], "open": f"{row['Open']:.2f}", "high": f"{row['High']:.2f}",
+           "low": f"{row['Low']:.2f}", "close": f"{row['Close']:.2f}"} for _, row in forecast_window.iterrows()]
 
-      high_price = q(max(open_price, close_price) + hi_off)
-      low_price = q(min(open_price, close_price) - lo_off)
-
-      # Guarantee OHLC consistency
-      if low_price > open_price:
-        low_price = q(open_price - tick)
-      if high_price < close_price:
-        high_price = q(close_price + tick)
-
-      bars.append({"Date": d.strftime("%Y-%m-%d"), "Open": open_price,
-                   "High": high_price, "Low": low_price,
-                   "Close": close_price, })
-
-      last_close_price = close_price  # feed forward
-
-    forecast_window = pd.DataFrame(bars)
-
-    # String-format OHLC for nice printing
-    ohlc = [{"date": row["Date"], "open": f"{row['Open']:.2f}",
-             "high": f"{row['High']:.2f}", "low": f"{row['Low']:.2f}",
-             "close": f"{row['Close']:.2f}", } for _, row in
-            forecast_window.iterrows()]
-
-    next_patterns.append({"start_date": forecast_window.iloc[0]["Date"],
-                          "end_date": forecast_window.iloc[-1]["Date"],
-                          "expected_pattern": expected_pattern,
-                          "confidence": confidence, "forecast_ohlc": ohlc, })
+  next_patterns.append({
+    "start_date": forecast_window.iloc[0]["Date"],
+    "end_date": forecast_window.iloc[-1]["Date"],
+    "expected_pattern": expected_pattern,
+    "confidence": confidence,
+    "forecast_ohlc": ohlc,
+  })
 
   # -------------------------------------------------
   # 4) Return structured results
