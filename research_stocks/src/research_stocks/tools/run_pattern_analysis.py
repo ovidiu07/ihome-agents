@@ -21,7 +21,9 @@ from dotenv import load_dotenv
 from advanced_pattern_helpers import (analyze_patterns, export_analysis_results,
                                       print_summary_report,
                                       refine_next_predictions,
-                                      generate_evolving_daily_ohlc, )
+                                      generate_evolving_daily_ohlc,
+                                      build_feature_stack,
+                                      probabilistic_day_forecast, )
 
 
 # ──────────────────────────── Polygon helpers ──────────────────────────────
@@ -69,6 +71,7 @@ def fetch_intraday_bars(symbol: str, api_key: str,
 
 
 # ───────────────────────── Pattern post-processing ─────────────────────────
+
 def drop_duplicates(patterns: list[dict]) -> list[dict]:
   """
   Remove exact duplicates based on (pattern, start, end).
@@ -82,6 +85,95 @@ def drop_duplicates(patterns: list[dict]) -> list[dict]:
       seen.add(key)
       unique.append(p)
   return unique
+
+
+# ───────────────────── Extra filtering / bias helpers ──────────────────────
+def suppress_nearby_hits(patterns: list[dict], gap: int = 10) -> list[dict]:
+  """
+  Remove any pattern whose start is fewer than `gap` bars after the previous
+  occurrence *of the same pattern type*.
+  Patterns MUST be sorted by start_date before calling this helper.
+  """
+  if not patterns:
+    return patterns
+  patterns = sorted(patterns, key=lambda p: p["start_date"])
+  kept: list[dict] = [patterns[0]]
+  for p in patterns[1:]:
+    prev = kept[-1]
+    same = p["pattern"] == prev["pattern"]
+    delta = (pd.to_datetime(p["start_date"]) - pd.to_datetime(
+        prev["end_date"])).seconds / 60
+    if not (same and delta < gap):
+      kept.append(p)
+  return kept
+
+
+def cluster_and_keep_best(patterns: list[dict], overlap: float = 0.7) -> list[
+  dict]:
+  """
+  On the daily list, collapse patterns that overlap > `overlap` fraction in
+  time; keep only the highest‑score (“value”) item of each cluster.
+  """
+  if not patterns:
+    return patterns
+  patterns = sorted(patterns, key=lambda p: p["start_date"])
+  clusters: list[list[dict]] = []
+  for p in patterns:
+    placed = False
+    for c in clusters:
+      last = c[0]  # clusters are homogeneous enough
+      # --- compute overlap in days (always non‑negative) ---
+      s1, e1 = pd.to_datetime(p["start_date"]), pd.to_datetime(p["end_date"])
+      s2, e2 = pd.to_datetime(last["start_date"]), pd.to_datetime(
+          last["end_date"])
+
+      # raw overlap length (may be negative if no intersection)
+      overlap_len = (min(e1, e2) - max(s1, s2)).days + 1
+
+      # clamp to ≥ 0 so we can safely compare with integers
+      inter = max(0, overlap_len)
+
+      # length (in days) of the shorter pattern – also ≥ 1
+      shorter = min((e1 - s1).days + 1, (e2 - s2).days + 1)
+      if shorter and inter / shorter >= overlap:
+        c.append(p)
+        placed = True
+        break
+    if not placed:
+      clusters.append([p])
+
+  # pick best‑scoring representative
+  best = [max(c, key=lambda x: x["value"]) for c in clusters]
+  return best
+
+
+def get_intraday_bias(patterns: list[dict]) -> int:
+  """Return +1 for net bullish, ‑1 for net bearish, 0 otherwise."""
+  if not patterns:
+    return 0
+  bulls = sum(p["direction"] == "bullish" for p in patterns)
+  bears = sum(p["direction"] == "bearish" for p in patterns)
+  return (bulls > bears) - (bears > bulls)
+
+
+def get_daily_bias(patterns: list[dict]) -> int:
+  """Same as above but for daily frame."""
+  return get_intraday_bias(patterns)
+
+
+def blended_forecast(intraday_direction: int, daily_direction: int,
+    vwap_trend: str, atr: float) -> str:
+  """
+  Very simple ensemble: majority vote of three signals.
+  Returns 'UP', 'DOWN' or 'NEUTRAL'.
+  """
+  votes = [intraday_direction, daily_direction, 1 if vwap_trend == "UP" else -1]
+  score = sum(votes)
+  if score > 1:
+    return f"UP (target +{atr:.2f})"
+  if score < -1:
+    return f"DOWN (target -{atr:.2f})"
+  return "NEUTRAL"
 
 
 # ────────────────────────────────── Main ───────────────────────────────────
@@ -104,17 +196,19 @@ def main() -> None:
   if df_today_min is None or df_today_min.empty:
     print("⚠️  Skipping intraday pattern scan — no data.")
     df_combined = df_hist.tail(180)
+    intraday_filtered = []
   else:
     print("\n🔍 Running pattern analysis on earliest data for today…")
 
-    # 1-minute pattern scan (15-bar rolling window)
-    raw_intraday = analyze_patterns(df_today_min, window=15)["patterns"]
+    # ── 1‑minute pattern scan (20‑bar window, strict filters) ──
+    raw_intraday = analyze_patterns(df_today_min, window=20)["patterns"]
 
-    # Filter: score ≥ 1.5, status Confirmed/Partial, min length ≥ 8 bars
     intraday_filtered = [p for p in raw_intraday if
-                         p.get("value", 0) >= 1.2 and p.get("status") in {
-                           "Confirmed", "Partial"}]
-    intraday_filtered = drop_duplicates(intraday_filtered)
+                         p.get("value", 0) >= 1.2 and p.get(
+                           "status") == "Confirmed" and (
+                             pd.to_datetime(p["end_date"]) - pd.to_datetime(
+                             p["start_date"])).seconds / 60 >= 20]
+    intraday_filtered = suppress_nearby_hits(intraday_filtered, gap=10)
 
     if intraday_filtered:
       print("\n🧠 Premarket / morning pattern summary:")
@@ -135,6 +229,8 @@ def main() -> None:
   # 2️⃣ suppress engine‑flagged “Duplicate” hits
   daily_patterns = [p for p in daily_patterns if p.get("status") != "Duplicate"]
 
+  # 3️⃣ collapse heavily‑overlapping daily patterns
+  daily_patterns = cluster_and_keep_best(daily_patterns, overlap=0.7)
   results["patterns"] = daily_patterns  # put back into results
   results = refine_next_predictions(results, df_combined)
   export_analysis_results(results)
@@ -154,22 +250,40 @@ def main() -> None:
     print(df_today.head(1).to_string(index=False))
   # Select a DataFrame that actually exists for the volume-based trend gauge
   df_vol = df_today_min if (
-        df_today_min is not None and not df_today_min.empty) else df_hist
+      df_today_min is not None and not df_today_min.empty) else df_hist
 
   if "Volume" in df_vol.columns and not df_vol["Volume"].isnull().all():
     # VWAP — stays a Series
-    vwap = (df_vol["Close"] * df_vol["Volume"]).cumsum() / df_vol["Volume"].cumsum()
+    vwap = (df_vol["Close"] * df_vol["Volume"]).cumsum() / df_vol[
+      "Volume"].cumsum()
 
     # OBV — force a Series (np.where returns ndarray)
-    obv_raw = np.where(df_vol["Close"].diff().fillna(0) >= 0,
-                       df_vol["Volume"], -df_vol["Volume"]).cumsum()
+    obv_raw = np.where(df_vol["Close"].diff().fillna(0) >= 0, df_vol["Volume"],
+                       -df_vol["Volume"]).cumsum()
     obv = pd.Series(obv_raw, index=df_vol.index)
 
-    trend = ("UP"
-             if (df_vol["Close"].iloc[-1] > vwap.iloc[-1]
-                 and obv.iloc[-1] > obv.iloc[0])
-             else "DOWN")
+    trend = ("UP" if (
+        df_vol["Close"].iloc[-1] > vwap.iloc[-1] and obv.iloc[-1] > obv.iloc[
+      0]) else "DOWN")
     print(f"\n📈 VWAP/OBV trend hint: {trend}")
+    # Section which takes data known so far and builds another forecast based on it ; Refined forecast
+    features = build_feature_stack(df_hist, df_today_min, daily_patterns,
+                                   intraday_filtered, trend)
+    today_open = df_today_min.iloc[0][
+      "Open"] if df_today_min is not None and not df_today_min.empty else \
+      df_hist.iloc[-1]["Open"]
+    day_fcast = probabilistic_day_forecast(features, today_open)
+    print(f"\n🔮 Prob-weighted forecast ({day_fcast['direction']}, "
+          f"conf {day_fcast['confidence']:.0%}) "
+          f"O={day_fcast['O']} H={day_fcast['H']} L={day_fcast['L']} C={day_fcast['C']}")
+
+  # ── Ensemble forecast ──
+  atr14 = df_hist["High"].sub(df_hist["Low"]).rolling(14).mean().iloc[-1]
+  ensemble = blended_forecast(
+      intraday_direction=get_intraday_bias(intraday_filtered),
+      daily_direction=get_daily_bias(daily_patterns), vwap_trend=trend,
+      atr=atr14)
+  print(f"\n🔮 Ensemble forecast: {ensemble}")
   print_summary_report(results, show_forecast=True)
 
 

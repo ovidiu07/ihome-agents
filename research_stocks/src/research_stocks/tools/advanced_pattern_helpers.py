@@ -1319,3 +1319,103 @@ class _OHLCForecaster:
       self._atr = statistics.mean(self._tr_history) if self._tr_history else 0.0
 
     return forecasts
+
+
+  # ─────────────────────────── Rich-feature day forecast ────────────────────
+def build_feature_stack(df_hist: pd.DataFrame,
+    df_today_min: pd.DataFrame | None,
+    daily_patterns: list[dict],
+    intraday_patterns: list[dict],
+    vwap_trend: str) -> dict:
+  """
+  Assemble a dictionary of numeric features that we’ll feed to the model /
+  ensemble logic below.  You can keep extending this without touching the
+  rest of the code.
+  """
+  atr14 = df_hist["High"].sub(df_hist["Low"]).rolling(14).mean().iloc[-1]
+
+  # Momentum – simple 14-period RSI on daily close
+  delta = df_hist["Close"].diff()
+  gain = delta.clip(lower=0).rolling(14).mean()
+  loss = (-delta.clip(upper=0)).rolling(14).mean()
+  rs = gain / loss.replace(0, np.nan)
+  rsi14 = 100 - 100 / (1 + rs.iloc[-1])
+
+  # Pattern bias (net bullish – bearish)
+  b_intr = sum(p["direction"] == "bullish" for p in intraday_patterns) \
+           - sum(p["direction"] == "bearish" for p in intraday_patterns)
+  b_daily = sum(p["direction"] == "bullish" for p in daily_patterns) \
+            - sum(p["direction"] == "bearish" for p in daily_patterns)
+
+  # Early-session range & VWAP gap
+  if df_today_min is not None and not df_today_min.empty:
+    ohlc_first = df_today_min.iloc[0]
+    high_so_far = df_today_min["High"].max()
+    low_so_far  = df_today_min["Low"].min()
+    vwap_now    = (df_today_min["Close"]*df_today_min["Volume"]).cumsum().iloc[-1] \
+                  / df_today_min["Volume"].cumsum().iloc[-1]
+    vwap_gap_pct = (ohlc_first["Close"] - vwap_now) / ohlc_first["Close"]
+  else:
+    high_so_far = low_so_far = vwap_gap_pct = np.nan
+
+  return dict(
+      atr14      = float(atr14),
+      rsi14      = float(rsi14),
+      patt_intr  = b_intr,
+      patt_daily = b_daily,
+      vwap_gap   = float(vwap_gap_pct),
+      high_so_far= float(high_so_far),
+      low_so_far = float(low_so_far),
+      vwap_trend = 1 if vwap_trend == "UP" else -1
+  )
+
+
+def probabilistic_day_forecast(features: dict,
+    open_price: float,
+    base_conf: float = 0.55) -> dict:
+  """
+  Very lightweight ‘model’: turn feature scores into a bullish probability.
+  Feel free to swap this out for a real ML classifier once you have data.
+  """
+
+  # ----- 1. translate features to confidence -----
+  # you can tune these weights or make them learned parameters
+  wt = dict(
+      patt_daily = 0.35,
+      patt_intr  = 0.20,
+      vwap_trend = 0.15,
+      rsi14      = 0.15,   # normalised below
+      vwap_gap   = 0.10,
+      atr14      = 0.05,
+  )
+
+  # scale/normalise
+  score = 0
+  score += wt["patt_daily"] * np.tanh(features["patt_daily"])
+  score += wt["patt_intr"]  * np.tanh(features["patt_intr"])
+  score += wt["vwap_trend"] * features["vwap_trend"]
+  score += wt["rsi14"]      * ((features["rsi14"] - 50) / 50)   # ∈[-1,1]
+  score += wt["vwap_gap"]   * (-features["vwap_gap"]*10)        # small gap
+  score += wt["atr14"]      * 0                                 # already in ranges
+
+  # probability that today finishes up vs yesterday close
+  p_up = 1 / (1 + np.exp(-5 * score))          # logistic squashing
+  confidence = base_conf + (p_up - 0.5)        # centre on ~0.55
+
+  # clamp sensibly
+  confidence = float(np.clip(confidence, 0.3, 0.9))
+
+  # ----- 2. convert prob + ATR into OHLC forecast -----
+  move = features["atr14"] * (confidence - 0.5) * 2  # move ∈[-ATR, +ATR]
+  close_est = open_price + move
+  high_est  = max(close_est, open_price) + features["atr14"] * 0.6
+  low_est   = min(close_est, open_price) - features["atr14"] * 0.6
+
+  return dict(
+      confidence = confidence,
+      O = round(open_price, 2),
+      H = round(high_est, 2),
+      L = round(low_est, 2),
+      C = round(close_est, 2),
+      direction = "UP" if move > 0 else "DOWN"
+  )
