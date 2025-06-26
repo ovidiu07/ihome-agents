@@ -1352,55 +1352,101 @@ class _OHLCForecaster:
 
   # ─────────────────────────── Rich-feature day forecast ────────────────────
 def build_feature_stack(df_hist: pd.DataFrame,
-    df_today_min: pd.DataFrame | None,
-    daily_patterns: list[dict],
-    intraday_patterns: list[dict],
-    vwap_trend: str,
-    morning_breakout: int = 0,
-    morning_range: float = 0.0) -> dict:
-  """
-  Assemble a dictionary of numeric features that we’ll feed to the model /
-  ensemble logic below.  You can keep extending this without touching the
-  rest of the code.
-  """
-  atr14 = df_hist["High"].sub(df_hist["Low"]).rolling(14).mean().iloc[-1]
+                        df_today_min: pd.DataFrame | None,
+                        daily_patterns: list[dict],
+                        intraday_patterns: list[dict],
+                        vwap_trend: str,
+                        morning_cutoff: str = "10:30") -> dict:
+    """
+    Assemble a rich dictionary of numeric features harvested from:
+        • Daily history (ATR, RSI, pattern bias …)
+        • Intraday tape so‑far (realised range, VWAP gap, morn breakout …)
+        • Pattern reliability (PATTERN_RELIABILITY weightings)
 
-  # Momentum – simple 14-period RSI on daily close
-  delta = df_hist["Close"].diff()
-  gain = delta.clip(lower=0).rolling(14).mean()
-  loss = (-delta.clip(upper=0)).rolling(14).mean()
-  rs = gain / loss.replace(0, np.nan)
-  rsi14 = 100 - 100 / (1 + rs.iloc[-1])
+    Parameters
+    ----------
+    df_hist : daily OHLC frame (≥ 30 rows recommended)
+    df_today_min : intraday 1‑min (or similar) frame; may be None pre‑market.
+    daily_patterns / intraday_patterns : output from the detectors
+    vwap_trend : 'UP' or 'DOWN' from the VWAP/OBV gauge
+    morning_cutoff : time (HH:MM) delimiting the “opening range” window
 
-  # Pattern bias (net bullish – bearish)
-  b_intr = sum(p["direction"] == "bullish" for p in intraday_patterns) \
-           - sum(p["direction"] == "bearish" for p in intraday_patterns)
-  b_daily = sum(p["direction"] == "bullish" for p in daily_patterns) \
-            - sum(p["direction"] == "bearish" for p in daily_patterns)
+    Returns
+    -------
+    dict   – feature → float
+    """
 
-  # Early-session range & VWAP gap
-  if df_today_min is not None and not df_today_min.empty:
-    ohlc_first = df_today_min.iloc[0]
-    high_so_far = df_today_min["High"].max()
-    low_so_far  = df_today_min["Low"].min()
-    vwap_now    = (df_today_min["Close"]*df_today_min["Volume"]).cumsum().iloc[-1] \
-                  / df_today_min["Volume"].cumsum().iloc[-1]
-    vwap_gap_pct = (ohlc_first["Close"] - vwap_now) / ohlc_first["Close"]
-  else:
+    # ---------- DAILY‑FRAME METRICS ---------------------------------
+    atr14 = df_hist["High"].sub(df_hist["Low"]).rolling(14).mean().iloc[-1]
+
+    # Simple RSI(14)
+    delta = df_hist["Close"].diff()
+    gain = delta.clip(lower=0).rolling(14).mean()
+    loss = (-delta.clip(upper=0)).rolling(14).mean()
+    rs = gain / loss.replace(0, np.nan)
+    rsi14 = 100 - 100 / (1 + rs.iloc[-1])
+
+    # Pattern bias and reliability‑adjusted score
+    def _bias_score(patts: list[dict]) -> tuple[int, float]:
+        bias = 0
+        rel_sum = 0.0
+        for p in patts:
+            sign = 1 if p["direction"] == "bullish" else -1 if p["direction"] == "bearish" else 0
+            bias += sign
+            rel_sum += sign * get_pattern_reliability(p["pattern"])
+        max_n = max(1, len(patts))
+        rel_norm = rel_sum / max_n          # −1 … +1
+        return bias, rel_norm
+
+    b_intr, rel_intr = _bias_score(intraday_patterns)
+    b_daily, rel_daily = _bias_score(daily_patterns)
+    rel_score = 0.6 * rel_daily + 0.4 * rel_intr   # weighted blend
+
+    # ---------- INTRADAY (SO‑FAR) METRICS ---------------------------
     high_so_far = low_so_far = vwap_gap_pct = np.nan
+    morn_breakout = 0
+    morn_range_norm = 0.0
 
-  return dict(
-      atr14      = float(atr14),
-      rsi14      = float(rsi14),
-      patt_intr  = b_intr,
-      patt_daily = b_daily,
-      vwap_gap   = float(vwap_gap_pct),
-      high_so_far= float(high_so_far),
-      low_so_far = float(low_so_far),
-      vwap_trend = 1 if vwap_trend == "UP" else -1,
-      morn_brk  = morning_breakout,
-      morn_rng  = morning_range,
-  )
+    if df_today_min is not None and not df_today_min.empty:
+        # Opening price & VWAP gap
+        ohlc_first = df_today_min.iloc[0]
+        vwap_now = (df_today_min["Close"] * df_today_min["Volume"]).cumsum().iloc[-1] \
+                   / df_today_min["Volume"].cumsum().iloc[-1]
+        vwap_gap_pct = (ohlc_first["Close"] - vwap_now) / max(1e-6, ohlc_first["Close"])
+
+        # Realised extremes
+        high_so_far = df_today_min["High"].max()
+        low_so_far = df_today_min["Low"].min()
+
+        # ----- Opening‑range stats (to `morning_cutoff`) -------------
+        # --- Determine the timestamp marking the end of the opening range ---
+        first_day_str = df_today_min["Datetime"].dt.date.iloc[0].strftime("%Y-%m-%d")
+        cutoff_ts = pd.to_datetime(f"{first_day_str} {morning_cutoff}")
+        open_window = df_today_min[df_today_min["Datetime"] <= cutoff_ts]
+        if not open_window.empty:
+            or_high = open_window["High"].max()
+            or_low  = open_window["Low"].min()
+            morn_range_norm = (or_high - or_low) / max(1e-6, atr14)
+            last_px = df_today_min["Close"].iloc[-1]
+            if last_px > or_high * 1.001:
+                morn_breakout = 1
+            elif last_px < or_low * 0.999:
+                morn_breakout = -1
+
+    # ---------- PACK ------------------------------------------------
+    return dict(
+        atr14       = float(atr14),
+        rsi14       = float(rsi14),
+        patt_intr   = b_intr,
+        patt_daily  = b_daily,
+        rel_score   = float(rel_score),
+        high_so_far = float(high_so_far),
+        low_so_far  = float(low_so_far),
+        vwap_gap    = float(vwap_gap_pct),
+        vwap_trend  = 1 if vwap_trend == "UP" else -1,
+        morn_brk    = morn_breakout,
+        morn_rng    = morn_range_norm,
+    )
 
 
 def probabilistic_day_forecast(
