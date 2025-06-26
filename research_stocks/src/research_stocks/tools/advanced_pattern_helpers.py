@@ -3,6 +3,7 @@ import os
 import statistics
 from datetime import timedelta
 from typing import List, Dict
+from collections.abc import Mapping
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -48,11 +49,19 @@ def get_pattern_reliability(name: str) -> float:
     return PATTERN_RELIABILITY.get(name, 0.50)
 
 def ensure_pattern_dates_are_datetime(patterns):
+  """
+  Coerce pattern 'start_date' and 'end_date' fields to pandas.Timestamp.
+  Any value that cannot be converted will be set to pd.NaT so it can be
+  filtered out safely later on. Returns the modified list.
+  """
   for p in patterns:
-    if isinstance(p.get('start_date'), str):
-      p['start_date'] = pd.to_datetime(p['start_date'])
-    if isinstance(p.get('end_date'), str):
-      p['end_date'] = pd.to_datetime(p['end_date'])
+    for fld in ("start_date", "end_date"):
+      val = p.get(fld)
+      if not isinstance(val, pd.Timestamp):
+        try:
+          p[fld] = pd.to_datetime(val)
+        except Exception:
+          p[fld] = pd.NaT
   return patterns
 
 
@@ -697,6 +706,10 @@ def backtest_pattern_strategy(df: pd.DataFrame, patterns: List[Dict],
   equity_curve = []
 
   patterns = ensure_pattern_dates_are_datetime(patterns)
+  patterns = [p for p in patterns
+              if isinstance(p["start_date"], pd.Timestamp)
+              and isinstance(p["end_date"], pd.Timestamp)
+              and not (pd.isna(p["start_date"]) or pd.isna(p["end_date"]))]
   df['Date'] = pd.to_datetime(df['Date'])
   for i, row in df.iterrows():
     date = row['Date']
@@ -757,31 +770,49 @@ def export_analysis_results(results: Dict[str, any],
 
   # --- cache the full results structure for quick reuse ---------------
   with open(f"{output_dir}/results_cache.json", "w") as f:
-    def convert(obj):
-      if isinstance(obj, dict):
-        return {k: convert(v) for k, v in obj.items()}
-      elif isinstance(obj, list):
-        return [convert(v) for v in obj]
-      elif isinstance(obj, pd.Timestamp):
-        return obj.strftime("%Y-%m-%d")
-      return obj
-
     cache = results.copy()
     for k, v in cache.items():
       if isinstance(v, pd.DataFrame):
         cache[k] = v.to_dict(orient="records")
 
     def convert(obj):
-      if isinstance(obj, dict):
-        return {k: convert(v) for k, v in obj.items()}
-      elif isinstance(obj, list):
-        return [convert(v) for v in obj]
-      elif isinstance(obj, pd.Timestamp):
-        return obj.strftime("%Y-%m-%d")
-      return obj
+        """
+        Recursively make any object JSON‑serialisable.
 
-    cache = convert(cache)
-    json.dump(cache, f, indent=2)
+        * Scalars (str/int/float/bool/None) pass through untouched.
+        * NaN / NaT / pandas‐style missing values become None.
+        * pd.Timestamp / numpy.datetime64 → ISO‑date strings.
+        * Mapping / list / tuple / set containers are walked recursively.
+        * Anything still unrecognised is converted to str(..) as a last resort.
+        """
+        # Fast‑path for already OK primitives
+        if obj is None or isinstance(obj, (str, int, float, bool)):
+            # Leave np.nan & NaN to the generic pd.isna() handler below
+            if obj is None or not (isinstance(obj, float) and pd.isna(obj)):
+                return obj
+
+        # Universal missing‑value check (catches pd.NaT, np.nan, etc.)
+        if pd.isna(obj):
+            return None
+
+        # Datetime-like → ISO string (date portion only for simplicity)
+        if isinstance(obj, (pd.Timestamp, np.datetime64)):
+            try:
+                return pd.to_datetime(obj).strftime("%Y-%m-%d")
+            except Exception:
+                return str(obj)
+
+        # Recursively handle common containers
+        if isinstance(obj, Mapping):
+            return {k: convert(v) for k, v in obj.items()}
+        if isinstance(obj, (list, tuple, set)):
+            return [convert(v) for v in obj]
+
+        # Fallback: stringify anything else
+        return str(obj)
+
+    # Run the deep‑conversion once and serialise with a safe fallback
+    json.dump(convert(cache), f, indent=2, default=str)
 
 
 def plot_analysis_results(results: Dict[str, any]):

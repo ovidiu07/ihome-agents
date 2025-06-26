@@ -186,13 +186,13 @@ def main() -> None:
     return
 
   # ── Daily history (12 months minus current session) ──
-  nvda = yf.Ticker("NVDA")
+  nvda = yf.Ticker("TSLA")
   df_hist = nvda.history(period="12mo", interval="1d").iloc[:-1].copy()
   df_hist.reset_index(inplace=True)
   df_hist["Date"] = df_hist["Date"].dt.strftime("%Y-%m-%d")
 
   # ── Intraday bars (today) ──
-  df_today_min = fetch_intraday_bars("NVDA", poly_key, limit=150)
+  df_today_min = fetch_intraday_bars("TSLA", poly_key, limit=150)
 
   if df_today_min is None or df_today_min.empty:
     print("⚠️  Skipping intraday pattern scan — no data.")
