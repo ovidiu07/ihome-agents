@@ -178,6 +178,7 @@ def blended_forecast(intraday_direction: int, daily_direction: int,
 
 # ────────────────────────────────── Main ───────────────────────────────────
 def main() -> None:
+  global df_today
   load_dotenv()
   poly_key = os.getenv("POLYGON_KEY")
   if not poly_key:
@@ -205,7 +206,7 @@ def main() -> None:
 
     intraday_filtered = [p for p in raw_intraday if
                          p.get("value", 0) >= 1.2 and p.get(
-                           "status") == "Confirmed" and (
+                             "status") == "Confirmed" and (
                              pd.to_datetime(p["end_date"]) - pd.to_datetime(
                              p["start_date"])).seconds / 60 >= 20]
     intraday_filtered = suppress_nearby_hits(intraday_filtered, gap=10)
@@ -246,11 +247,8 @@ def main() -> None:
         "ℹ️  No patterns found in daily data.")  # ── Simple VWAP + OBV trend gauge over the fetched window ──
 
   if df_today_min is not None and not df_today_min.empty:
-    print("\n🔮 OHLC for today’s earliest intraday bars:")
-    print(df_today.head(1).to_string(index=False))
-  # Select a DataFrame that actually exists for the volume-based trend gauge
-  df_vol = df_today_min if (
-      df_today_min is not None and not df_today_min.empty) else df_hist
+    df_vol = df_today_min if (
+        df_today_min is not None and not df_today_min.empty) else df_hist
 
   if "Volume" in df_vol.columns and not df_vol["Volume"].isnull().all():
     # VWAP — stays a Series
@@ -265,17 +263,13 @@ def main() -> None:
     trend = ("UP" if (
         df_vol["Close"].iloc[-1] > vwap.iloc[-1] and obv.iloc[-1] > obv.iloc[
       0]) else "DOWN")
-    print(f"\n📈 VWAP/OBV trend hint: {trend}")
+
     # Section which takes data known so far and builds another forecast based on it ; Refined forecast
     features = build_feature_stack(df_hist, df_today_min, daily_patterns,
                                    intraday_filtered, trend)
     today_open = df_today_min.iloc[0][
       "Open"] if df_today_min is not None and not df_today_min.empty else \
       df_hist.iloc[-1]["Open"]
-    day_fcast = probabilistic_day_forecast(features, today_open)
-    print(f"\n🔮 Prob-weighted forecast ({day_fcast['direction']}, "
-          f"conf {day_fcast['confidence']:.0%}) "
-          f"O={day_fcast['O']} H={day_fcast['H']} L={day_fcast['L']} C={day_fcast['C']}")
 
   # ── Ensemble forecast ──
   atr14 = df_hist["High"].sub(df_hist["Low"]).rolling(14).mean().iloc[-1]
@@ -285,6 +279,13 @@ def main() -> None:
       atr=atr14)
   print(f"\n🔮 Ensemble forecast: {ensemble}")
   print_summary_report(results, show_forecast=True)
+  print("\n🔮 OHLC for today’s earliest intraday bars:")
+  print(df_today.head(1).to_string(index=False))
+  print(f"\n📈 VWAP/OBV trend hint: {trend}")
+  day_fcast = probabilistic_day_forecast(features, today_open)
+  print(f"\n🔮 Prob-weighted forecast ({day_fcast['direction']}, "
+        f"conf {day_fcast['confidence']:.0%}) "
+        f"O={day_fcast['O']} H={day_fcast['H']} L={day_fcast['L']} C={day_fcast['C']}")
 
 
 # ────────────────────────────────────────────────────────────────────────────

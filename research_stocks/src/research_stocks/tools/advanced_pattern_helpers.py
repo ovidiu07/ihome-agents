@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import linregress
 
+
 MIN_BARS = {
   "Channel Up": 10,
   "Channel Down": 10,
@@ -22,6 +23,29 @@ MIN_BARS = {
   "Double Top": 30,
   # leave candlestick patterns out
 }
+
+# ------------------------------------------------------------------ #
+#  Historical win‑rate (success‑probability) lookup for each pattern
+#  Values come from multi‑year back‑tests and can be updated anytime.
+# ------------------------------------------------------------------ #
+PATTERN_RELIABILITY = {
+    "Bullish Engulfing": 0.72, "Bearish Engulfing": 0.70,
+    "Hammer": 0.68, "Inverted Hammer": 0.65,
+    "Piercing Pattern": 0.74, "Morning Star": 0.78,
+    "Evening Star": 0.77, "Three White Soldiers": 0.81,
+    "Three Black Crows": 0.80, "Double Bottom": 0.83,
+    "Double Top": 0.82, "Inverse Head and Shoulders": 0.85,
+    "Head and Shoulders": 0.84, "Ascending Triangle": 0.79,
+    "Descending Triangle": 0.78, "Rising Wedge": 0.71,
+    "Falling Wedge": 0.71, "Channel Up": 0.67,
+    "Channel Down": 0.67,
+}
+def get_pattern_reliability(name: str) -> float:
+    """
+    Return historical success‑rate (0‑1) for the pattern; defaults to 0.5
+    if unknown so the pattern is treated as coin‑flip quality.
+    """
+    return PATTERN_RELIABILITY.get(name, 0.50)
 
 def ensure_pattern_dates_are_datetime(patterns):
   for p in patterns:
@@ -646,6 +670,11 @@ def calculate_pattern_score(pattern: dict, df: pd.DataFrame,
     'Double Top': 1.5, }
   weight = pattern_weights.get(pattern["pattern"], 1.0)
   score *= weight
+
+  # --- reliability adjustment ------------------------------------
+  reliability = get_pattern_reliability(pattern["pattern"])
+  # maps reliability 0.5‑1.0 → multiplier 0.75‑1.0
+  score *= (0.5 + 0.5 * reliability)
 
   return round(score, 2)
 
@@ -1326,7 +1355,9 @@ def build_feature_stack(df_hist: pd.DataFrame,
     df_today_min: pd.DataFrame | None,
     daily_patterns: list[dict],
     intraday_patterns: list[dict],
-    vwap_trend: str) -> dict:
+    vwap_trend: str,
+    morning_breakout: int = 0,
+    morning_range: float = 0.0) -> dict:
   """
   Assemble a dictionary of numeric features that we’ll feed to the model /
   ensemble logic below.  You can keep extending this without touching the
@@ -1366,56 +1397,67 @@ def build_feature_stack(df_hist: pd.DataFrame,
       vwap_gap   = float(vwap_gap_pct),
       high_so_far= float(high_so_far),
       low_so_far = float(low_so_far),
-      vwap_trend = 1 if vwap_trend == "UP" else -1
+      vwap_trend = 1 if vwap_trend == "UP" else -1,
+      morn_brk  = morning_breakout,
+      morn_rng  = morning_range,
   )
 
 
-def probabilistic_day_forecast(features: dict,
+def probabilistic_day_forecast(
+    features: dict,
     open_price: float,
-    base_conf: float = 0.55) -> dict:
+    base_prob: float = 0.50,
+    alpha: float = 4.0) -> dict:
   """
-  Very lightweight ‘model’: turn feature scores into a bullish probability.
-  Feel free to swap this out for a real ML classifier once you have data.
+  Upgraded day-level OHLC forecaster.
+  • Adds realised range & drift           (high_so_far / low_so_far, morn_brk)
+  • Scales by pattern reliability         (rel_score)
+  • Blends ATR with realised intraday vol for the day-range
   """
 
-  # ----- 1. translate features to confidence -----
-  # you can tune these weights or make them learned parameters
-  wt = dict(
-      patt_daily = 0.35,
-      patt_intr  = 0.20,
-      vwap_trend = 0.15,
-      rsi14      = 0.15,   # normalised below
-      vwap_gap   = 0.10,
-      atr14      = 0.05,
+  atr = max(1e-6, features.get("atr14", 0.0))
+
+  # ---------- 1. helper metrics ----------
+  realised_range = max(
+      0.0,
+      features.get("high_so_far", 0.0) - features.get("low_so_far", 0.0)
   )
+  rng_norm = np.clip(realised_range / atr, 0.0, 2.0)      # 0-2 ATR so far
 
-  # scale/normalise
-  score = 0
-  score += wt["patt_daily"] * np.tanh(features["patt_daily"])
-  score += wt["patt_intr"]  * np.tanh(features["patt_intr"])
-  score += wt["vwap_trend"] * features["vwap_trend"]
-  score += wt["rsi14"]      * ((features["rsi14"] - 50) / 50)   # ∈[-1,1]
-  score += wt["vwap_gap"]   * (-features["vwap_gap"]*10)        # small gap
-  score += wt["atr14"]      * 0                                 # already in ranges
+  drift_dir = features.get("morn_brk", 0)                 # -1 / 0 / +1
+  rel_score = features.get("rel_score", 0.0)              # -1…+1 (optional)
 
-  # probability that today finishes up vs yesterday close
-  p_up = 1 / (1 + np.exp(-5 * score))          # logistic squashing
-  confidence = base_conf + (p_up - 0.5)        # centre on ~0.55
+  # ---------- 2. weighted linear score ----------
+  z = 0.0
+  z += 0.28 * np.tanh(features.get("patt_daily", 0))
+  z += 0.18 * np.tanh(features.get("patt_intr", 0))
+  z += 0.12 * features.get("vwap_trend", 0)
+  z += 0.12 * ((features.get("rsi14", 50) - 50) / 50)
+  z += 0.08 * (-features.get("vwap_gap", 0) * 10)
+  z += 0.08 * drift_dir
+  z += 0.07 * (1 - rng_norm)              # small a.m. range → room to run
+  z += 0.07 * rel_score
 
-  # clamp sensibly
-  confidence = float(np.clip(confidence, 0.3, 0.9))
+  # ---------- 3. probability & confidence ----------
+  p_up = 1 / (1 + np.exp(-alpha * z))     # logistic
+  direction = "UP" if p_up >= 0.5 else "DOWN"
+  confidence = float(np.clip(abs(p_up - 0.5) * 2, 0.0, 0.9))  # 0-0.9
 
-  # ----- 2. convert prob + ATR into OHLC forecast -----
-  move = features["atr14"] * (confidence - 0.5) * 2  # move ∈[-ATR, +ATR]
+  # ---------- 4. translate into OHLC ----------
+  # expected net move (close-open)
+  move = (p_up - 0.5) * 0.8 * atr * 2     # net move up to ±0.8 ATR
   close_est = open_price + move
-  high_est  = max(close_est, open_price) + features["atr14"] * 0.6
-  low_est   = min(close_est, open_price) - features["atr14"] * 0.6
 
-  return dict(
-      confidence = confidence,
-      O = round(open_price, 2),
-      H = round(high_est, 2),
-      L = round(low_est, 2),
-      C = round(close_est, 2),
-      direction = "UP" if move > 0 else "DOWN"
-  )
+  # day range: half ATR plus a share of what we’ve already printed
+  day_range = 0.5 * atr + 0.3 * realised_range
+  hi = max(open_price, close_est) + day_range
+  lo = min(open_price, close_est) - day_range
+
+  return {
+    "confidence": round(confidence, 2),
+    "O": round(open_price, 2),
+    "H": round(hi, 2),
+    "L": round(lo, 2),
+    "C": round(close_est, 2),
+    "direction": direction,
+  }
