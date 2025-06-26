@@ -9,6 +9,19 @@ import numpy as np
 import pandas as pd
 from scipy.stats import linregress
 
+MIN_BARS = {
+  "Channel Up": 10,
+  "Channel Down": 10,
+  "Ascending Triangle": 15,
+  "Descending Triangle": 15,
+  "Rising Wedge": 15,
+  "Falling Wedge": 15,
+  "Head and Shoulders": 25,
+  "Inverse Head and Shoulders": 25,
+  "Double Bottom": 30,
+  "Double Top": 30,
+  # leave candlestick patterns out
+}
 
 def ensure_pattern_dates_are_datetime(patterns):
   for p in patterns:
@@ -773,9 +786,9 @@ def print_summary_report(results: Dict[str, any], show_forecast: bool = True):
     return pat.get("value", pat.get("score", 0))
 
   filtered_patterns = [
-      p for p in patterns
-      if _get_score(p) >= 1
-         and p.get("status") in ("Confirmed", "Partial")  # skip 'Duplicate'
+    p for p in patterns
+    if _get_score(p) >= 1.4           # ► raised from 1.0 → 1.4
+       and p.get("status") in ("Confirmed", "Partial")
   ]
   # Show up to the last 12 patterns so single‑bar formations are visible
   for filtered_pattern in filtered_patterns:
@@ -825,7 +838,20 @@ def analyze_patterns(df: pd.DataFrame, window: int = 5,
   results += detect_ascending_triangle_raw(df)
   results += detect_double_bottom_raw(df)
 
-  # Score + resolve conflicts
+  # -------------------------------------------------
+  # 1.5)  Tag every pattern with its bar-length
+  # -------------------------------------------------
+  for patt in results:
+    try:
+      start_idx = df.index[df["Date"] == patt["start_date"]][0]
+      end_idx   = df.index[df["Date"] == patt["end_date"]][0]
+      patt["bars"] = int(end_idx - start_idx + 1)
+    except Exception:
+      patt["bars"] = 0
+
+  # -------------------------------------------------
+  # 2)  Score + resolve conflicts
+  # -------------------------------------------------
   for p in results:
     p["value"] = calculate_pattern_score(p, df, volume_col)
   results = resolve_conflicts(results)

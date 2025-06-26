@@ -12,31 +12,28 @@
 import os
 from datetime import datetime, time
 
+import numpy as np
 import pandas as pd
 import requests
 import yfinance as yf
 from dotenv import load_dotenv
 
-from advanced_pattern_helpers import (
-  analyze_patterns,
-  export_analysis_results,
-  print_summary_report,
-  refine_next_predictions,
-  generate_evolving_daily_ohlc,
-)
+from advanced_pattern_helpers import (analyze_patterns, export_analysis_results,
+                                      print_summary_report,
+                                      refine_next_predictions,
+                                      generate_evolving_daily_ohlc, )
 
 
 # ──────────────────────────── Polygon helpers ──────────────────────────────
-def fetch_intraday_bars(symbol: str, api_key: str, limit: int = 150) -> pd.DataFrame | None:
+def fetch_intraday_bars(symbol: str, api_key: str,
+    limit: int = 150) -> pd.DataFrame | None:
   """
   Pulls the latest `limit` 1-minute bars for `symbol` from Polygon.io.
   Returns a DataFrame or None if no data.
   """
   today = datetime.now().strftime("%Y-%m-%d")
-  url = (
-    f"https://api.polygon.io/v2/aggs/ticker/{symbol}/range/1/minute/"
-    f"{today}/{today}?adjusted=true&sort=asc&limit={limit}&apiKey={api_key}"
-  )
+  url = (f"https://api.polygon.io/v2/aggs/ticker/{symbol}/range/1/minute/"
+         f"{today}/{today}?adjusted=true&sort=asc&limit={limit}&apiKey={api_key}")
 
   try:
     resp = requests.get(url, timeout=10)
@@ -48,16 +45,9 @@ def fetch_intraday_bars(symbol: str, api_key: str, limit: int = 150) -> pd.DataF
       return None
 
     bars = [
-      {
-        "Datetime": datetime.fromtimestamp(bar["t"] / 1000),
-        "Open": bar["o"],
-        "High": bar["h"],
-        "Low": bar["l"],
-        "Close": bar["c"],
-        "Volume": bar.get("v", 0),
-      }
-      for bar in data["results"]
-    ]
+      {"Datetime": datetime.fromtimestamp(bar["t"] / 1000), "Open": bar["o"],
+       "High": bar["h"], "Low": bar["l"], "Close": bar["c"],
+       "Volume": bar.get("v", 0), } for bar in data["results"]]
     df = pd.DataFrame(bars)
 
     # ► Keep only regular-hours bars (09:30–16:00 ET). Comment out to include pre-/post-market.
@@ -121,13 +111,9 @@ def main() -> None:
     raw_intraday = analyze_patterns(df_today_min, window=15)["patterns"]
 
     # Filter: score ≥ 1.5, status Confirmed/Partial, min length ≥ 8 bars
-    intraday_filtered = [
-      p
-      for p in raw_intraday
-      if p.get("value", 0) >= 1.2
-         and p.get("status") in {"Confirmed", "Partial"}
-         and (p.get("bars", 0) >= 3)  # assumes helper adds bar-length
-    ]
+    intraday_filtered = [p for p in raw_intraday if
+                         p.get("value", 0) >= 1.2 and p.get("status") in {
+                           "Confirmed", "Partial"}]
     intraday_filtered = drop_duplicates(intraday_filtered)
 
     if intraday_filtered:
@@ -156,18 +142,34 @@ def main() -> None:
   if results["patterns"]:
     print("\n📊 Daily pattern summary (look-back 12 mo):")
     for p in results["patterns"]:
-      print(
-          f"- {p['start_date']} to {p['end_date']}: "
-          f"{p['pattern']} ({p['direction']}, "
-          f"score={float(p['value']):.2f}, status={p['status']})"
-      )
+      print(f"- {p['start_date']} to {p['end_date']}: "
+            f"{p['pattern']} ({p['direction']}, "
+            f"score={float(p['value']):.2f}, status={p['status']})")
   else:
-    print("ℹ️  No patterns found in daily data.")
+    print(
+        "ℹ️  No patterns found in daily data.")  # ── Simple VWAP + OBV trend gauge over the fetched window ──
 
   if df_today_min is not None and not df_today_min.empty:
     print("\n🔮 OHLC for today’s earliest intraday bars:")
     print(df_today.head(1).to_string(index=False))
+  # Select a DataFrame that actually exists for the volume-based trend gauge
+  df_vol = df_today_min if (
+        df_today_min is not None and not df_today_min.empty) else df_hist
 
+  if "Volume" in df_vol.columns and not df_vol["Volume"].isnull().all():
+    # VWAP — stays a Series
+    vwap = (df_vol["Close"] * df_vol["Volume"]).cumsum() / df_vol["Volume"].cumsum()
+
+    # OBV — force a Series (np.where returns ndarray)
+    obv_raw = np.where(df_vol["Close"].diff().fillna(0) >= 0,
+                       df_vol["Volume"], -df_vol["Volume"]).cumsum()
+    obv = pd.Series(obv_raw, index=df_vol.index)
+
+    trend = ("UP"
+             if (df_vol["Close"].iloc[-1] > vwap.iloc[-1]
+                 and obv.iloc[-1] > obv.iloc[0])
+             else "DOWN")
+    print(f"\n📈 VWAP/OBV trend hint: {trend}")
   print_summary_report(results, show_forecast=True)
 
 
