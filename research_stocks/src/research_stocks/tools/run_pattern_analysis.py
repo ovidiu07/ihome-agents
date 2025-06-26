@@ -34,7 +34,7 @@ def main():
     df_combined = df_hist[-180:]
   else:
     print("\n🔍 Running pattern analysis on premarket data (before 09:30 ET)...")
-    premarket_results = analyze_patterns(df_intraday_today, window=3)
+    premarket_results = analyze_patterns(df_intraday_today, window=7)
     print_summary_report(premarket_results, show_forecast=False)
     # Convert today's intraday bars to evolving daily OHLC
     df_today = pd.DataFrame([generate_evolving_daily_ohlc(df_intraday_today)])
@@ -56,10 +56,10 @@ def main():
 
 def fetch_intraday_bars(symbol: str, api_key: str,
     limit: int = 100) -> pd.DataFrame:
-  # now = datetime.now()
-  # today_str = now.strftime('%Y-%m-%d')
-  now = datetime(2025, 6, 25)  # Mocked date to be commented and used real time
+  now = datetime.now()
   today_str = now.strftime('%Y-%m-%d')
+  # now = datetime(2025, 6, 25)  # Mocked date to be commented and used real time
+  # today_str = now.strftime('%Y-%m-%d')
   url = (f"https://api.polygon.io/v2/aggs/ticker/{symbol}/range/1/minute/"
          f"{today_str}/{today_str}?adjusted=true&sort=asc&limit={limit}&apiKey={api_key}")
 
