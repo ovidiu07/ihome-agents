@@ -25,21 +25,39 @@ def main():
   df_hist.reset_index(inplace=True)
   df_hist['Date'] = df_hist['Date'].dt.strftime('%Y-%m-%d')
   df_hist = df_hist[:-1]  # Exclude current day
-
+  df_today = None
   # Fetch last 100 1-min bars from Polygon
-  df_intraday_today = fetch_intraday_bars("NVDA", key, limit=100)
+  df_intraday_today = fetch_intraday_bars("NVDA", key, limit=150)
 
   if df_intraday_today is None or df_intraday_today.empty:
     print("⚠️ Skipping intraday enhancement — no data.")
     df_combined = df_hist[-180:]
   else:
-    print("\n🔍 Running pattern analysis on premarket data (before 09:30 ET)...")
-    premarket_results = analyze_patterns(df_intraday_today, window=7)
-    print_summary_report(premarket_results, show_forecast=False)
+    if not df_intraday_today.empty:
+      print(f"\n🔍 Running pattern analysis on earliest data for today...")
+      # Analyze premarket patterns
+      earliest_results = analyze_patterns(df_intraday_today, window=5)
+
+      # ✅ Just extract the patterns (don't overwrite the original structure)
+      filtered_patterns = [p for p in earliest_results.get("patterns", []) if
+                           "score" in p and p["score"] >= 1 and p.get(
+                               "status") in ("Confirmed", "Partial")]
+
+      if filtered_patterns:
+        print("\n🧠 Premarket Pattern Summary:")
+        print_summary_report({"patterns": filtered_patterns},
+                             show_forecast=False)
+      else:
+        for p in earliest_results.get("patterns", []):
+          print(
+              f"🔹 Pattern: {p.get('pattern')}, Direction: {p.get('direction')}, "
+              f"Score: {float(p.get('value', 0)):.2f}, Status: {p.get('status')}, "
+              f"From: {p.get('start_date')} To: {p.get('end_date')}")
+
+    else:
+      print("⚠️ No bars found in the intraday data.")
     # Convert today's intraday bars to evolving daily OHLC
     df_today = pd.DataFrame([generate_evolving_daily_ohlc(df_intraday_today)])
-    print("\n🔮 Convert today’s intraday 1-min bars into a synthetic OHLC bar")
-    print(df_today)
     df_combined = pd.concat([df_hist[-180:], df_today], ignore_index=True)
 
   # Analyze patterns + refine forecast
@@ -47,11 +65,17 @@ def main():
   results = refine_next_predictions(results, df_combined)
 
   export_analysis_results(results)
-  print_summary_report(results, show_forecast=True)
+  if results["patterns"]:
+    print("\n📊 Daily Pattern Summary:")
+    for p in results["patterns"]:
+      print(f"- {p['start_date']} to {p['end_date']}: {p['pattern']} "
+            f"({p['direction']}, score={float(p.get('value', 0)):.2f}, status={p.get('status')})")
+  else:
+    print("ℹ️ No patterns found in combined data.")
 
-  print("\n🔮 Refined Forecast:")
-  for day in results["next_predictions_refined"]:
-    print(f"• {day}")
+  print("\n🔮 Convert today’s intraday 1-min bars into a synthetic OHLC bar")
+  print(df_today)
+  print_summary_report(results, show_forecast=True)
 
 
 def fetch_intraday_bars(symbol: str, api_key: str,
@@ -86,7 +110,7 @@ def fetch_intraday_bars(symbol: str, api_key: str,
     # df = df[df['Datetime'].dt.time.between(time(9, 30), time(16, 0))]  -> this uncomment if i don't want premarket
 
     if not df.empty:
-      print("\n🔍 Premarket or earliest intraday bars:")
+      print("\n🔍 Earliest intraday bars:")
       print(df.head(
           10))  # Shows earliest available data, typically starting around 04:00 ET
 
