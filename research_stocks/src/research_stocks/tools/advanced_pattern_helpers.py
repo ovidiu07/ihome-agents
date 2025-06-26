@@ -765,21 +765,25 @@ def plot_analysis_results(results: Dict[str, any]):
 
 
 def print_summary_report(results: Dict[str, any], show_forecast: bool = True):
-  print("\n🧠 Pattern Recognition Summary:")
-  # Optional: filter out weak/noisy patterns by score or status
+  # ------------------------------------------------------------------
+  # Filter logic: keep only high‑quality, non‑duplicate patterns
+  # ------------------------------------------------------------------
   patterns = results.get("patterns", [])
+  def _get_score(pat):
+    return pat.get("value", pat.get("score", 0))
+
   filtered_patterns = [
-    p for p in patterns
-    if "score" in p and "status" in p and
-       p["score"] >= 1 and p["status"] in ("Confirmed", "Partial")
+      p for p in patterns
+      if _get_score(p) >= 1
+         and p.get("status") in ("Confirmed", "Partial")  # skip 'Duplicate'
   ]
   # Show up to the last 12 patterns so single‑bar formations are visible
   for filtered_pattern in filtered_patterns:
     print(
-        f"- {filtered_pattern['start_date']} to {filtered_pattern['end_date']}: {filtered_pattern['pattern']} ({filtered_pattern['direction']}, score={filtered_pattern['value']}, status={filtered_pattern.get('status', '?')})")
+        f"- {filtered_pattern['start_date']} to {filtered_pattern['end_date']}: {filtered_pattern['pattern']} ({filtered_pattern['direction']}, score={_get_score(filtered_pattern)}, status={filtered_pattern.get('status', '?')})")
   if show_forecast:
     if results["next_predictions"]:
-      print("\n🔮 Forecast:")
+      print("\n🔮 Forecast for today:")
       for pred in results["next_predictions"]:
         print(
             f"- {pred['start_date']} to {pred['end_date']}: {pred['expected_pattern']} (Confidence: {pred['confidence']})")
