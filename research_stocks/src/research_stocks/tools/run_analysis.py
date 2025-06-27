@@ -44,6 +44,7 @@ from pattern_analysis.forecasting import (
 
 def main() -> None:
     """Main function to run pattern analysis."""
+    df_today: pd.DataFrame | None = None
     load_dotenv()
     poly_key = os.getenv("POLYGON_KEY")
     if not poly_key:
@@ -51,10 +52,10 @@ def main() -> None:
         return
 
     # ── Daily history (12 months minus current session) ──
-    df_hist = fetch_daily_history("TSLA", period="12mo")
+    df_hist = fetch_daily_history("PLTR", period="12mo")
 
     # ── Intraday bars (today) ──
-    df_today_min = fetch_intraday_bars("TSLA", poly_key, limit=150)
+    df_today_min = fetch_intraday_bars("PLTR", poly_key, limit=150)
 
     if df_today_min is None or df_today_min.empty:
         print("⚠️  Skipping intraday pattern scan — no data.")
@@ -68,9 +69,9 @@ def main() -> None:
 
         # Filter patterns based on criteria
         intraday_filtered = filter_patterns_by_criteria(
-            raw_intraday, 
-            min_value=1.2, 
-            status="Confirmed", 
+            raw_intraday,
+            min_value=1.2,
+            status="Confirmed",
             min_duration_minutes=20
         )
         intraday_filtered = suppress_nearby_hits(intraday_filtered, gap=10)
@@ -125,7 +126,7 @@ def main() -> None:
     atr14 = calculate_atr(df_hist, period=14)
     ensemble = blended_forecast(
         intraday_direction=get_intraday_bias(intraday_filtered),
-        daily_direction=get_daily_bias(daily_patterns), 
+        daily_direction=get_daily_bias(daily_patterns),
         vwap_trend=trend,
         atr=atr14
     )
@@ -133,8 +134,9 @@ def main() -> None:
     # Print forecasts and summaries
     print(f"\n🔮 Ensemble forecast: {ensemble}")
     print_summary_report(results, show_forecast=True)
-    print("\n🔮 OHLC for today's earliest intraday bars:")
-    print(df_today.head(1).to_string(index=False))
+    if df_today is not None:
+        print("\n🔮 OHLC for today's earliest intraday bars:")
+        print(df_today.head(1).to_string(index=False))
     print(f"\n📈 VWAP/OBV trend hint: {trend}")
 
     day_fcast = probabilistic_day_forecast(features, today_open)
