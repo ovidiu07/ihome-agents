@@ -1,17 +1,20 @@
 # utils.py
 # --------
 # Utility functions for pattern analysis
+from __future__ import annotations
 
 import pandas as pd
 from typing import List, Dict
 
 
-def get_pattern_reliability(name: str) -> float:
+def get_pattern_reliability(name: str | None = None):
     """
-    Return a reliability score (0-1) for the given pattern name.
-    Higher values indicate more reliable patterns.
+    Return a reliability score (0-1) for a given pattern *or* the full mapping
+    when no name is provided.
+
+    A higher value means the pattern is considered more trustworthy.
     """
-    # These values are subjective and based on common technical analysis literature
+    # Subjective values based on common technical-analysis literature
     reliability = {
         "Head and Shoulders": 0.75,
         "Inverse Head and Shoulders": 0.75,
@@ -27,6 +30,12 @@ def get_pattern_reliability(name: str) -> float:
         "Channel Up": 0.55,
         "Channel Down": 0.55,
     }
+
+    # Legacy behaviour: return the whole dict if no specific pattern requested
+    if name is None:
+        return reliability
+
+    # Normal behaviour: single pattern lookup
     return reliability.get(name, 0.5)  # Default to 0.5 for unknown patterns
 
 

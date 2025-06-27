@@ -50,10 +50,10 @@ def main() -> None:
         return
 
     # ── Daily history (12 months minus current session) ──
-    df_hist = fetch_daily_history("TSLA", period="12mo")
+    df_hist = fetch_daily_history("SPY", period="12mo")
 
     # ── Intraday bars (today) ──
-    df_today_min = fetch_intraday_bars("TSLA", poly_key, limit=150)
+    df_today_min = fetch_intraday_bars("SPY", poly_key, limit=150)
 
     if df_today_min is None or df_today_min.empty:
         print("⚠️  Skipping intraday pattern scan — no data.")
