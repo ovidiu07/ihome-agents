@@ -57,7 +57,7 @@ def main() -> None:
         print("❌  POLYGON_KEY not set in environment variables.", file=sys.stderr)
         return
 
-    symbol = "SPY"           # ← adapt to taste
+    symbol = "MSFT"           # ← adapt to taste
     lookback = "12mo"         # daily history to pull
     mc_paths = 2_000          # Monte-Carlo paths for probabilistic forecast
 
@@ -73,7 +73,7 @@ def main() -> None:
         intraday_filtered: list[dict] = []
     else:
         print("\n🔍 Scanning intraday patterns …")
-        raw_intraday = analyze_patterns(df_today_min, window=20)["patterns"]
+        raw_intraday = analyze_patterns(symbol, df_today_min, window=20)["patterns"]
 
         intraday_filtered = suppress_nearby_hits(
             filter_patterns_by_criteria(
@@ -95,7 +95,7 @@ def main() -> None:
         df_combined = pd.concat([df_hist.tail(180), df_today], ignore_index=True)
 
     # ─── Daily-candle pattern analysis ─────────────────────────────────────
-    results = analyze_patterns(df_combined, window=5)
+    results = analyze_patterns(symbol, df_combined, window=5)
 
     daily_patterns = cluster_and_keep_best(
         remove_duplicates_by_status(

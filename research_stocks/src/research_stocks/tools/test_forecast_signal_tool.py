@@ -12,7 +12,7 @@ if __name__ == "__main__":
   ]
 
   tool = ForecastSignalTool()
-  result = tool.run(ticker="SPY", close_prices=close_prices, vix=18.3)
+  result = tool.run(ticker="MSFT", close_prices=close_prices, vix=18.3)
 
   print("=== Forecast Signal Result ===")
   for key, value in result.items():
