@@ -120,7 +120,7 @@ def resolve_conflicts(patterns: List[Dict]) -> List[Dict]:
   return [p for i, p in enumerate(sorted_patterns) if keep[i]]
 
 
-def analyze_patterns(symbol: str, df: pd.DataFrame, window: int = 5,
+def analyze_patterns(symbol: str, df: pd.DataFrame, df_summary: pd.DataFrame, window: int = 5,
     volume_col: str = None) -> Dict[str, Any]:
   """
   Analyze price data for various patterns.
@@ -187,7 +187,8 @@ def analyze_patterns(symbol: str, df: pd.DataFrame, window: int = 5,
 
   # Resolve conflicts between patterns
   results['patterns'] = resolve_conflicts(results['patterns'])
-
+  results['stock_data'] = df_summary.to_dict('records')
+  results['symbol'] = symbol
   # Sort patterns by date
   results['patterns'] = sorted(results['patterns'],
                                key=lambda p: pd.to_datetime(p['start_date']))
