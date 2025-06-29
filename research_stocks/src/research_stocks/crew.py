@@ -50,7 +50,7 @@ def get_appropriate_llm(task_complexity: str) -> LLM:
 #     api_key=AGENTOPS_API_KEY,
 #     default_tags=['crewai']
 # )
-@CrewBase
+# @CrewBase
 class StockAnalysisCrew:
   agents_config = 'config/agents.yaml'
   tasks_config = 'config/tasks.yaml'
@@ -273,10 +273,9 @@ class StockAnalysisCrew:
                 input={"etf_symbols": ", ".join(etf_part2),
                        "equity_symbols": ", ".join(equity_part2), }, )
 
-  @crew
-  def crew(self) -> Crew:
+
+  # @crew
+  def crew(self) -> None:
     """Creates the Market Briefing Crew"""
-    # How to run here main function from run_analysis.py ?
-    symbol = self.equity_watchlist()[0] if self.equity_watchlist() else "MSFT"
-    run_pattern_analysis(
-        symbol)  # tasks = [self.harvest_data()]  # tasks.extend(self.fundamental_analysis_tasks())  # tech_task = self.technical_analysis()  # part1_task = self.compose_report_part1()  # if tech_task:  #   tasks.append(tech_task)  # if part1_task:  #   tasks.append(part1_task)  #  # compose_part2 = self.compose_report_part2()  # if compose_part2 is not None:  #   tasks.append(compose_part2)  #  # return Crew(  #     agents=[self.data_harvester_agent(), self.valuation_engine_agent(),  #             self.pattern_scanner_agent(), self.report_composer_agent()],  #     tasks=tasks, process=Process.sequential, verbose=True, )
+    print("Starting Market Briefing Crew...")
+
