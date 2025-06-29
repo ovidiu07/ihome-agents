@@ -1,19 +1,16 @@
 # src/tools/market_data_tools.py
-import datetime
 import hashlib
 import json
 import logging
 import os
-import requests
 import time
+from pathlib import Path
+
+import requests
+import talib
 from crewai.tools import BaseTool
 from crewai.tools.base_tool import BaseTool
 from dotenv import load_dotenv
-import numpy as np
-from pathlib import Path
-import talib
-from .advanced_pattern_helpers import apply_custom_patterns
-
 
 CACHE_DIR = os.getenv("CACHE_DIR")
 load_dotenv()
@@ -86,7 +83,6 @@ class PoliticalNewsTool(BaseTool):
 
   def _run(self, query: str = "politics OR policy", days_back: int = 1):
     import hashlib, json, os
-    from pathlib import Path
 
     api_key = os.getenv("NEWSAPI_KEY")
     if not api_key:
@@ -143,10 +139,8 @@ class ETFDataTool(BaseTool):
       with open(cache_path) as f:
         data = json.load(f)
         # >>> NEW lines – keep ONLY the tickers we were asked for
-        data["tickers"] = [
-          t for t in data.get("tickers", [])
-          if t.get("ticker") in symbols
-        ]
+        data["tickers"] = [t for t in data.get("tickers", []) if
+          t.get("ticker") in symbols]
     else:
       data = _request_with_retries(url, rate_limiter=RateLimiter(2))
       if cache_path:
@@ -162,8 +156,9 @@ class ETFDataTool(BaseTool):
 
       day = td.get("day", {})
       compact[sym] = {"open": day.get("o"), "high": day.get("h"),
-        "low": day.get("l"), "close": day.get("c"), "volume": day.get("v"),
-        "chg_pct": td.get("todaysChangePerc"), }
+                      "low": day.get("l"), "close": day.get("c"),
+                      "volume": day.get("v"),
+                      "chg_pct": td.get("todaysChangePerc"), }
 
     print(">>> Compact payload:", compact)  # should list ONLY SPY & NVDA
     return compact  # ≈150 chars per ticker, LLM-safe
@@ -241,7 +236,6 @@ class GlobalEventsTool(BaseTool):
     import hashlib
     import json
     import os
-    from pathlib import Path
 
     key = os.getenv("NEWSAPI_KEY")
     if not key:
@@ -356,8 +350,6 @@ class FundamentalMathTool(BaseTool):
   description: str = "Compute valuation ratios (P/E and EV/EBITDA) and give a valuation grade from fundamentals."
 
   def _run(self, eps: float, price: float, ebitda: float, shares: float):
-    import os
-    from pathlib import Path
 
     result = {}
     errors = []
@@ -530,7 +522,8 @@ class MarketPriceTool(BaseTool):
       f.write("| Date | Open | High | Low | Close | Volume |\n")
       f.write("|------|------|------|-----|-------|--------|\n")
       for entry in ohlc_series[-5:]:
-        f.write(f"| {entry['date']} | {entry['open']} | {entry['high']} | {entry['low']} | {entry['close']} | {entry['volume']} |\n")
+        f.write(
+          f"| {entry['date']} | {entry['open']} | {entry['high']} | {entry['low']} | {entry['close']} | {entry['volume']} |\n")
 
     return ohlc_series
 
@@ -554,16 +547,13 @@ class ForecastSignalTool(BaseTool):
     last_macd_signal = macd_signal[-1]
 
     # Build forecast dictionary
-    forecast = {
-      "ticker": ticker.upper(),
-      "current_price": round(last_price, 2),
-      "rsi": round(rsi, 2),
-      "macd": round(last_macd, 4),
-      "macd_signal": round(last_macd_signal, 4),
-    }
+    forecast = {"ticker": ticker.upper(), "current_price": round(last_price, 2),
+      "rsi": round(rsi, 2), "macd": round(last_macd, 4),
+      "macd_signal": round(last_macd_signal, 4), }
 
     # Calculate 1-day historical volatility and price estimates
-    volatility = round(statistics.stdev(close_prices[-10:]) / last_price * 100, 2)
+    volatility = round(statistics.stdev(close_prices[-10:]) / last_price * 100,
+                       2)
     forecast["expected_volatility_%"] = volatility
     forecast["next_day_high"] = round(last_price * (1 + volatility / 100), 2)
     forecast["next_day_low"] = round(last_price * (1 - volatility / 100), 2)
@@ -609,10 +599,8 @@ class ForecastSignalTool(BaseTool):
     # Save to JSON file for persistence
     json_path = Path(f"{ticker.upper()}_forecast.json")
     with open(json_path, "w") as jf:
-      json.dump(forecast, jf, indent=2)
-        # --- Write Markdown Summary ---
-    md_lines = [
-      f"# Forecast Signal - {ticker.upper()}",
+      json.dump(forecast, jf, indent=2)  # --- Write Markdown Summary ---
+    md_lines = [f"# Forecast Signal - {ticker.upper()}",
       f"- **Current Price**: {forecast['current_price']}",
       f"- **RSI**: {forecast['rsi']}",
       f"- **MACD**: {forecast['macd']} (signal: {forecast['macd_signal']})",
@@ -621,8 +609,7 @@ class ForecastSignalTool(BaseTool):
       f"- **Next Day Low**: {forecast['next_day_low']}",
       f"- **Today High Estimate**: {forecast['today_high_estimate']}",
       f"- **Today Low Estimate**: {forecast['today_low_estimate']}",
-      f"- **Advice**: {forecast['advice']}"
-    ]
+      f"- **Advice**: {forecast['advice']}"]
 
     md_path = Path(f"{ticker.upper()}_forecast.md")
     with open(md_path, "w") as f:
@@ -674,13 +661,11 @@ class GrammarCheckTool(BaseTool):
     return resp.choices[0].message.content
 
 
-
 class PatternRecognitionTool(BaseTool):
   name: str = "PatternRecognitionTool"
   description: str = (
     "Analyze OHLC data and return candlestick + structural patterns "
-    "(e.g., hammer, double bottom, head and shoulders)."
-  )
+    "(e.g., hammer, double bottom, head and shoulders).")
 
   def _run(self, ticker: str, ohlc_data: list[dict], min_strength: int = 80):
     if not ohlc_data or len(ohlc_data) < 10:
@@ -696,24 +681,18 @@ class PatternRecognitionTool(BaseTool):
     close_prices = df["Close"].values
     dates = df["Date"].tolist()
 
-    patterns = {
-      "Hammer": talib.CDLHAMMER,
+    patterns = {"Hammer": talib.CDLHAMMER,
       "InvertedHammer": talib.CDLINVERTEDHAMMER,
-      "Engulfing": talib.CDLENGULFING,
-      "Harami": talib.CDLHARAMI,
-      "HaramiCross": talib.CDLHARAMICROSS,
-      "Doji": talib.CDLDOJI,
+      "Engulfing": talib.CDLENGULFING, "Harami": talib.CDLHARAMI,
+      "HaramiCross": talib.CDLHARAMICROSS, "Doji": talib.CDLDOJI,
       "DragonflyDoji": talib.CDLDRAGONFLYDOJI,
       "GravestoneDoji": talib.CDLGRAVESTONEDOJI,
       "ShootingStar": talib.CDLSHOOTINGSTAR,
-      "MorningStar": talib.CDLMORNINGSTAR,
-      "EveningStar": talib.CDLEVENINGSTAR,
+      "MorningStar": talib.CDLMORNINGSTAR, "EveningStar": talib.CDLEVENINGSTAR,
       "ThreeWhiteSoldiers": talib.CDL3WHITESOLDIERS,
-      "ThreeBlackCrows": talib.CDL3BLACKCROWS,
-      "Marubozu": talib.CDLMARUBOZU,
+      "ThreeBlackCrows": talib.CDL3BLACKCROWS, "Marubozu": talib.CDLMARUBOZU,
       "PiercingLine": talib.CDLPIERCING,
-      "DarkCloudCover": talib.CDLDARKCLOUDCOVER,
-    }
+      "DarkCloudCover": talib.CDLDARKCLOUDCOVER, }
 
     matches = []
     seen_dates = set()
@@ -722,12 +701,9 @@ class PatternRecognitionTool(BaseTool):
       values = func(open_prices, high_prices, low_prices, close_prices)
       for i, val in enumerate(values):
         if abs(val) >= min_strength and dates[i] not in seen_dates:
-          matches.append({
-            "date": dates[i],
-            "pattern": pattern_name,
+          matches.append({"date": dates[i], "pattern": pattern_name,
             "direction": "bullish" if val > 0 else "bearish",
-            "value": int(val)
-          })
+            "value": int(val)})
           seen_dates.add(dates[i])
 
     # -- Custom patterns --

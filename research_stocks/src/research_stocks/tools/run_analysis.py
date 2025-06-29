@@ -19,22 +19,22 @@ except ImportError:  # pragma: no cover
     print("⚠️  python-dotenv not installed ‑ set env variables manually.")
 
 # ───────── Internal imports (adjust package path if necessary) ───────────────
-from pattern_analysis.data_fetchers import fetch_intraday_bars, \
+from .pattern_analysis.data_fetchers import fetch_intraday_bars, \
   fetch_daily_history
-from pattern_analysis.pattern_filters import (drop_duplicates,
+from .pattern_analysis.pattern_filters import (drop_duplicates,
                                               suppress_nearby_hits,
                                               cluster_and_keep_best,
                                               filter_patterns_by_criteria,
                                               remove_duplicates_by_status, )
-from pattern_analysis.forecast_utils import (get_intraday_bias, get_daily_bias,
+from .pattern_analysis.forecast_utils import (get_intraday_bias, get_daily_bias,
                                              blended_forecast,
                                              calculate_vwap_obv_trend,
                                              calculate_atr, )
-from pattern_analysis.pattern_analyzer import analyze_patterns
-from pattern_analysis.reporting import (export_analysis_results,
+from .pattern_analysis.pattern_analyzer import analyze_patterns
+from .pattern_analysis.reporting import (export_analysis_results,
                                         print_summary_report,
                                         generate_evolving_daily_ohlc, )
-from pattern_analysis.forecasting import (refine_next_predictions,
+from .pattern_analysis.forecasting import (refine_next_predictions,
                                           probabilistic_day_forecast,  # ← new forecaster signature
 )
 
@@ -42,7 +42,7 @@ from pattern_analysis.forecasting import (refine_next_predictions,
 # ---------------------------------------------------------------------------
 
 
-def main() -> None:
+def main(symbol: str = "NVDA") -> None:
   """Run the complete pattern analysis pipeline."""
   # ─── Environment / configuration ───────────────────────────────────────
   load_dotenv()
@@ -51,7 +51,7 @@ def main() -> None:
     print("❌  POLYGON_KEY not set in environment variables.", file=sys.stderr)
     return
 
-  symbol = "MSFT"  # ← adapt to taste
+  symbol = symbol.upper()
   lookback = "12mo"  # daily history to pull
   mc_paths = 2_000  # Monte-Carlo paths for probabilistic forecast
 
@@ -132,4 +132,6 @@ def main() -> None:
 
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-  main()
+  import sys
+  input_symbol = sys.argv[1] if len(sys.argv) > 1 else "NVDA"
+  main(input_symbol)

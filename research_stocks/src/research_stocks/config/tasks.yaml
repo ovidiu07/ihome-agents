@@ -9,47 +9,33 @@ harvest_data:
        - DO NOT pass a dict — use direct keyword arguments like:
          `{"query": "recession OR fiscal tightening", "days_back": 2}`
 
-    2. **ETFDataTool**:
-       - For each ETF symbol, retrieve:
+    2. **DataTool**:
+       - For each symbol, retrieve:
          - Latest price
          - NAV
          - Volume
          - AUM (Assets Under Management)
          - Expense ratio (if available)
-       - Include timestamps and source attribution if possible.
-
-    3. **EquityFundamentalsTool**:
-       - For each equity symbol:
          - Fetch current market cap, P/E, EPS, revenue, net income, and free cash flow.
          - If dividend exists, include yield and payout ratio.
          - Tag each record with data source and retrieval time.
+         - Include timestamps and source attribution if possible.
 
-    4. **GlobalEventsTool**:
+
+    3. **GlobalEventsTool**:
        - Search for macroeconomic events, central bank meetings, regulatory changes, or political risk events in major economies.
        - Tag by region (e.g., US, EU, China) and by likely affected sector if inferrable.
 
-    5. **SentimentScanTool**:
-       - Scan social media, Reddit, financial forums, and news for sentiment signals.
-       - Apply to both ETFs and equities.
-       - Classify per symbol:
-         - `sentiment_score`: float from -1 (bearish) to +1 (bullish)
-         - `volume`: number of mentions
-         - `top_quotes`: list of high-signal quotes
-
     **Symbol Handling**:
-    - You will receive two lists:
-      • ETFs: {etf_symbols}
-      • Equities: {equity_symbols}
+    - You will receive the symbol from the console:
     - Tools must process each symbol separately.
     - Handle API failures gracefully (retry, then tag “Error”).
 
     **Output**:
     - Write 5 files:
       - `raw_political_news.json`
-      - `raw_etf_data.json`
-      - `raw_equity_fundamentals.json`
+      - `raw_data.json`
       - `raw_global_events.json`
-      - `raw_sentiment.json`
 
     **Constraints**:
     - Each file must be valid JSON and contain an array of records.
@@ -59,19 +45,17 @@ harvest_data:
   expected_output: >
     A confirmation message listing all five expected JSON files and confirming successful creation:
       • raw_political_news.json
-      • raw_etf_data.json
-      • raw_equity_fundamentals.json
+      • raw_data.json
       • raw_global_events.json
-      • raw_sentiment.json
 
     Example:
-    "✅ Successfully wrote 5 outputs: raw_political_news.json, raw_etf_data.json, raw_equity_fundamentals.json, raw_global_events.json, raw_sentiment.json"
+    "✅ Successfully wrote 3 outputs: raw_political_news.json, raw_data.json, raw_global_events.json"
 
   agent: data_harvester_agent
 
 fundamental_analysis:
   description: >
-    For each symbol (ETF and equity), perform a **standalone fundamental valuation**.
+    For each symbol, perform a **standalone fundamental valuation**.
 
     1. **Valuation Metrics**:
        - Calculate: P/E, EV/EBITDA, PEG ratio, Price-to-Book (P/B), and dividend yield.

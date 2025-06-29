@@ -13,34 +13,13 @@ data_harvester:
     A Reuters-trained data journalist with backend chops who never misses a
     datapoint and labels each item with an accurate market-impact score.
 
-  inputs:
-    etf_watchlist:
-      - SPY   # S&P 500
-#      - QQQ   # Nasdaq‑100
-#      - IVV   # Core S&P 500 (iShares)
-    equity_watchlist:
-      - NVDA   # NVIDIA
-#      - TSLA   # Tesla
-#      - AAPL   # Apple
-#      - MSFT   # Microsoft
-#      - AMZN   # Amazon
-#      - META   # Meta Platforms
-#      - GOOGL  # Alphabet‑Class A
-#      - BRK.B  # Berkshire Hathaway‑B
-#      - JPM    # JPMorgan Chase
-#      - UNH    # UnitedHealth
-#      - XOM    # Exxon Mobil
-#      - NFLX   # Netflix
+  input_mode: console
+  prompt: >
+    Enter a comma‑separated list of ETF or equity tickers to harvest data for.
 
   schedule: "CRON: 0 7 * * 1-5"  # 07:00 Mon–Fri Bucharest
   triggers:
     - slack:/harvest-now
-  #  tools:
-  #    - PoliticalNewsTool
-  #    - ETFDataTool
-  #    - EquityFundamentalsTool
-  #    - GlobalEventsTool
-  #    - SentimentScanTool
   outputs:
     - raw_political_news.json
     - raw_etf_data.json
@@ -50,36 +29,6 @@ data_harvester:
   error_handling: >
     Retry each API up to 3× with exponential back-off; on final failure send
     Slack alert #market-ops.
-
-valuation_engine:
-  role: >
-    Valuation Strategist | Equities & ETFs | Event-Sensitive
-  goal: >
-    Analyze raw fundamentals and derive valuation insights. Calculate key multiples 
-    like P/E, EV/EBITDA, and Price/Sales. Benchmark values against historical trends 
-    and industry peers. Highlight undervaluation or overvaluation signals. Adapt 
-    intraday price drift modeling based on event and sentiment triggers.
-
-  backstory: >
-    You are a highly analytical CFA-charterholder with a quant mindset, previously 
-    employed at a hedge fund. Fluent in financial modeling, you thrive on converting 
-    raw financial statements and ETF data into actionable valuation signals. 
-    You're obsessed with edge detection — spotting anomalies in pricing, and finding 
-    mispriced assets in real time. You cross-reference historical EPS trends, 
-    forward guidance, and sector benchmarks to support your calls.
-
-  triggers:
-    - on_file: raw_equity_fundamentals.json
-    - on_file: raw_etf_data.json
-
-  outputs:
-    - fundamental_summary.json
-
-  error_handling: >
-    If data completeness falls below 90%, tag each affected ticker with 
-    “Data Incomplete” and proceed with available data. If confidence in 
-    the derived valuation is below 0.4, mark the output as “Low Confidence” 
-    and include rationale. Always explain assumptions.
 
 pattern_scanner:
   role: >
@@ -100,6 +49,13 @@ pattern_scanner:
     speed and pattern recognition — seeing momentum turns and trend shifts 
     before they hit mainstream indicators. You never generalize — each ticker 
     tells its own story.
+
+  inputs:
+    - raw_political_news.json
+    - raw_etf_data.json
+    - raw_equity_fundamentals.json
+    - raw_global_events.json
+    - raw_sentiment.json
 
   triggers:
     - on_file: fundamental_summary.json
