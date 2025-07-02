@@ -1,27 +1,15 @@
 harvest_data:
-  description: |
-    You are given:
-      • symbol: {{symbol}}
-      • query: {{query}}
-      • days_back: {{days_back}}
-    You MUST call PoliticalNewsTool once for *each* symbol using exactly
-    those values. Do not invent or alter any parameter.
-    
-    **Output**:
-    - Writes 1 file:
-      - `raw_news.json`
-
-    **Constraints**:
-    - The file must be valid JSON and contain an array of records.
-    - Do NOT summarize, aggregate, or drop any symbols unless there's a critical failure.
-    - Validate that the file has been successfully written to disk.
-
+  description: >
+    Fetch political/policy headlines and cache to raw_news.json.
+  use_llm: false            # 👈 skip LLM completely
+  tool:
+    name: PoliticalNewsTool
+    inputs:
+      symbol: "{symbol}"
+      query: "{query}"
+      days_back: "{days_back}"
   expected_output: >
-    A confirmation message listing all five expected JSON files and confirming successful creation:
-      • raw_news.json
-
-    Example:
-    "✅ Successfully wrote the output: raw_news.json"
+    ✅ Saved the output: raw_news.json
 
 #fundamental_analysis:
 #  description: >

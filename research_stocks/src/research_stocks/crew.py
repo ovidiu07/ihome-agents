@@ -7,9 +7,7 @@ from dotenv import load_dotenv
 from functools import lru_cache
 from pathlib import Path
 
-from tools.market_data_tools import (PoliticalNewsTool, ETFDataTool,
-                                     EquityFundamentalsTool, SentimentScanTool,
-                                     GlobalEventsTool, MarkdownFormatterTool,
+from tools.market_data_tools import (PoliticalNewsTool, MarkdownFormatterTool,
                                      SlackPosterTool, GrammarCheckTool)
 
 load_dotenv()
@@ -78,8 +76,7 @@ class StockAnalysisCrew:
   @agent
   def data_harvester_agent(self) -> Agent:
     return Agent(config=self.agents_yaml()["data_harvester"], verbose=True,
-                 llm=get_appropriate_llm("low"),
-                 tools=[PoliticalNewsTool() ])
+                 llm=get_appropriate_llm("low"), tools=[PoliticalNewsTool()])
 
   @task
   def harvest_data(self) -> Task:
@@ -94,29 +91,21 @@ class StockAnalysisCrew:
       # Ensure the symbols are correctly formatted as a comma-separated string
       symbol_input = ", ".join(symbol_list)
       query_string = (
-        f"({symbol_input} financial results OR {symbol_input} quarterly earnings OR {symbol_input} revenue OR "
-        f"{symbol_input} profit margins OR {symbol_input} stock movement OR {symbol_input} analyst opinions OR "
-        f"{symbol_input} institutional investors OR {symbol_input} sector outlook OR {symbol_input} recent news OR "
-        f"{symbol_input} market analysis OR {symbol_input} press releases OR macroeconomic influences like inflation, "
-        f"interest rates, or central bank policies affecting {symbol_input})"
+        f'("{symbol_input}") AND ('
+        '"financial results" OR "quarterly earnings" OR revenue OR '
+        '"profit margin" OR "stock movement" OR analyst OR '
+        '"institutional investor" OR "sector outlook" OR "press release"'
+        ')'
       )
-      print(">>>> Task input being passed to data_harvester_agent:", {
-        "symbol": symbol_input,
-        "query": query_string,
-        "days_back": 3
-      })
-      return Task(
-        config=self.tasks_yaml().get("harvest_data", {}),
-        agent=self.data_harvester_agent(),
-        input={
-          "symbol": symbol_input,
-          "query": query_string,
-          "days_back": 3
-        },
-      )
+      print(">>>> Task input being passed to data_harvester_agent:",
+            {"symbol": symbol_input, "query": query_string, "days_back": 3})
+      return Task(config=self.tasks_yaml().get("harvest_data", {}),
+                  agent=self.data_harvester_agent(),
+                  inputs={"symbol": symbol_input, "query": query_string,
+                          "days_back": 3}, )
     except KeyError as e:
       raise RuntimeError(
-        f"Task configuration for harvest_data is missing or invalid: {e}")
+          f"Task configuration for harvest_data is missing or invalid: {e}")
     except Exception as e:
       raise RuntimeError(f"Error occurred in harvest_data task: {e}")
 
@@ -163,11 +152,11 @@ class StockAnalysisCrew:
         return None
 
       return Task(config=self.tasks_yaml().get("compose_report", {}),
-          agent=self.report_composer_agent(),
-          input={"symbol": ", ".join(symbol_chunk)})
+                  agent=self.report_composer_agent(),
+                  input={"symbol": ", ".join(symbol_chunk)})
     except KeyError as e:
       print(
-        f"[Error] Task configuration for compose_report_part1 is missing: {e}")
+          f"[Error] Task configuration for compose_report_part1 is missing: {e}")
       return None
     except Exception as e:
       print(f"[Error] Unexpected error in compose_report_part1: {e}")
@@ -198,24 +187,35 @@ class StockAnalysisCrew:
                 output_file="daily_market_brief.md",
                 input={"symbol": ", ".join(symbol_part2), }, )
 
+  def harvest_data_offline(self, symbols: list[str], days_back: int = 3):
+    symbol_input = ", ".join(symbols)
+    query_string = (
+      f'("{symbol_input}" OR "Nvidia") AND ('
+      '"financial results" OR "quarterly earnings" OR revenue OR '
+      '"profit margin" OR "stock movement" OR analyst OR '
+      '"institutional investor" OR "sector outlook" OR "press release"'
+      ')'
+    )
+
+    articles = PoliticalNewsTool()._run(symbol=symbol_input, query=query_string,
+        days_back=days_back)
+    print(f"✅ Saved {len(articles)} articles to raw_news.json")
 
   @crew
   def build_market_brief(self) -> Crew:
-      """Creates the Market Briefing Crew based on the provided stock symbol."""
-      print(f"Starting Market Briefing Crew for symbol: {self._symbol}...")
-      tasks = [self.harvest_data()]
+    """Creates the Market Briefing Crew based on the provided stock symbol."""
+    print(f"Starting Market Briefing Crew for symbol: {self._symbol}...")
+    tasks: list[Task] = []
+    # tasks = [self.harvest_data()]
+    # 0.   📰 Fetch the news — NO LLM COST
+    self.harvest_data_offline(self._symbol, days_back=3)
+    part1_task = self.compose_report_part1()
+    if part1_task:
+      tasks.append(part1_task)
 
-      part1_task = self.compose_report_part1()
-      if part1_task:
-          tasks.append(part1_task)
+    compose_part2 = self.compose_report_part2()
+    if compose_part2 is not None:
+      tasks.append(compose_part2)
 
-      compose_part2 = self.compose_report_part2()
-      if compose_part2 is not None:
-          tasks.append(compose_part2)
-
-      return Crew(
-          agents=[self.data_harvester_agent(), self.report_composer_agent()],
-          tasks=tasks,
-          process=Process.sequential,
-          verbose=True,
-      )
+    return Crew(agents=[self.report_composer_agent()], tasks=tasks,
+        process=Process.sequential, verbose=True, )

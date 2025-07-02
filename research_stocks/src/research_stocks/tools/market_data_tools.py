@@ -1,17 +1,16 @@
 # src/tools/market_data_tools.py
-import hashlib
 import json
 import logging
 import os
-import time
-from pathlib import Path
-from pydantic import BaseModel, Field, field_validator
-
 import requests
 import talib
+import time
 from crewai.tools import BaseTool
 from crewai.tools.base_tool import BaseTool
 from dotenv import load_dotenv
+from pathlib import Path
+from pydantic import BaseModel, Field, field_validator
+import hashlib, json, os, datetime, urllib.parse as up
 
 CACHE_DIR = os.getenv("CACHE_DIR")
 load_dotenv()
@@ -79,8 +78,8 @@ def _get_cache_path(name: str, key: str, ttl: int | None = None) -> Path | None:
 
 # ------------- DATA HARVESTER TOOLS ----------------------------------- #
 class PoliticalNewsToolSchema(BaseModel):
-  symbol: str   = Field(..., description="Ticker, alphabetic only, e.g. NVDA")
-  query:  str   = Field(..., description="Non-empty free-text search query")
+  symbol: str = Field(..., description="Ticker, alphabetic only, e.g. NVDA")
+  query: str = Field(..., description="Non-empty free-text search query")
   days_back: int = Field(..., ge=1, le=365,
                          description="Look-back window (1-365 days)")
 
@@ -102,7 +101,6 @@ class PoliticalNewsToolSchema(BaseModel):
     return v
 
 
-
 class PoliticalNewsTool(BaseTool):
   """
   Fetches raw political / policy-related news that may affect a given
@@ -112,14 +110,15 @@ class PoliticalNewsTool(BaseTool):
   name: str = "PoliticalNewsTool"
   description: str = (
     "Retrieves political or policy news headlines for the supplied "
-    "ticker symbol within a specified look-back window (days_back)."
-  )
+    "ticker symbol within a specified look-back window (days_back).")
 
   # LangChain / CrewAI will use this schema for validation
   args_schema = PoliticalNewsToolSchema
+
   def _run(self, query: str = None, symbol: str = None, days_back: int = 5):
     import hashlib, json, os, datetime
-    logging.info(f"[DEBUG] Received input -> query: {query}, symbol: {symbol}, days_back: {days_back}")
+    logging.info(
+        f"[DEBUG] Received input -> query: {query}, symbol: {symbol}, days_back: {days_back}")
     if symbol and not query:
       query = f"{symbol} AND (politics OR policy)"
     elif not query:
@@ -134,9 +133,17 @@ class PoliticalNewsTool(BaseTool):
     today = datetime.date.today()
     from_date = today - datetime.timedelta(days=days_back)
 
-    url = (f"https://newsapi.org/v2/everything"
-           f"?q={query}&from={from_date.isoformat()}&sortBy=publishedAt&pageSize=20"
-           f"&apiKey={api_key}")
+    # --- Build NewsAPI request with stronger filters ---
+    params = {
+      "q": query,                           # boolean expression
+      "from": from_date.isoformat(),        # look‑back window
+      "language": "en",                     # keep it consistent
+      "searchIn": "title,description",      # skip full body noise
+      "sortBy": "relevancy",                # rank best matches first
+      "pageSize": 20,
+      "apiKey": api_key,
+    }
+    url = "https://newsapi.org/v2/everything?" + up.urlencode(params)
 
     cache_key = hashlib.sha1(url.encode()).hexdigest()[:8]
     cache_path = _get_cache_path(self.name, cache_key, ttl=3600)
@@ -188,7 +195,7 @@ class ETFDataTool(BaseTool):
         data = json.load(f)
         # >>> NEW lines – keep ONLY the tickers we were asked for
         data["tickers"] = [t for t in data.get("tickers", []) if
-          t.get("ticker") in symbols]
+                           t.get("ticker") in symbols]
     else:
       data = _request_with_retries(url, rate_limiter=RateLimiter(2))
       if cache_path:
@@ -571,7 +578,7 @@ class MarketPriceTool(BaseTool):
       f.write("|------|------|------|-----|-------|--------|\n")
       for entry in ohlc_series[-5:]:
         f.write(
-          f"| {entry['date']} | {entry['open']} | {entry['high']} | {entry['low']} | {entry['close']} | {entry['volume']} |\n")
+            f"| {entry['date']} | {entry['open']} | {entry['high']} | {entry['low']} | {entry['close']} | {entry['volume']} |\n")
 
     return ohlc_series
 
@@ -596,8 +603,8 @@ class ForecastSignalTool(BaseTool):
 
     # Build forecast dictionary
     forecast = {"ticker": ticker.upper(), "current_price": round(last_price, 2),
-      "rsi": round(rsi, 2), "macd": round(last_macd, 4),
-      "macd_signal": round(last_macd_signal, 4), }
+                "rsi": round(rsi, 2), "macd": round(last_macd, 4),
+                "macd_signal": round(last_macd_signal, 4), }
 
     # Calculate 1-day historical volatility and price estimates
     volatility = round(statistics.stdev(close_prices[-10:]) / last_price * 100,
@@ -649,15 +656,15 @@ class ForecastSignalTool(BaseTool):
     with open(json_path, "w") as jf:
       json.dump(forecast, jf, indent=2)  # --- Write Markdown Summary ---
     md_lines = [f"# Forecast Signal - {ticker.upper()}",
-      f"- **Current Price**: {forecast['current_price']}",
-      f"- **RSI**: {forecast['rsi']}",
-      f"- **MACD**: {forecast['macd']} (signal: {forecast['macd_signal']})",
-      f"- **Volatility (10-day)**: {forecast['expected_volatility_%']}%",
-      f"- **Next Day High**: {forecast['next_day_high']}",
-      f"- **Next Day Low**: {forecast['next_day_low']}",
-      f"- **Today High Estimate**: {forecast['today_high_estimate']}",
-      f"- **Today Low Estimate**: {forecast['today_low_estimate']}",
-      f"- **Advice**: {forecast['advice']}"]
+                f"- **Current Price**: {forecast['current_price']}",
+                f"- **RSI**: {forecast['rsi']}",
+                f"- **MACD**: {forecast['macd']} (signal: {forecast['macd_signal']})",
+                f"- **Volatility (10-day)**: {forecast['expected_volatility_%']}%",
+                f"- **Next Day High**: {forecast['next_day_high']}",
+                f"- **Next Day Low**: {forecast['next_day_low']}",
+                f"- **Today High Estimate**: {forecast['today_high_estimate']}",
+                f"- **Today Low Estimate**: {forecast['today_low_estimate']}",
+                f"- **Advice**: {forecast['advice']}"]
 
     md_path = Path(f"{ticker.upper()}_forecast.md")
     with open(md_path, "w") as f:
@@ -730,17 +737,19 @@ class PatternRecognitionTool(BaseTool):
     dates = df["Date"].tolist()
 
     patterns = {"Hammer": talib.CDLHAMMER,
-      "InvertedHammer": talib.CDLINVERTEDHAMMER,
-      "Engulfing": talib.CDLENGULFING, "Harami": talib.CDLHARAMI,
-      "HaramiCross": talib.CDLHARAMICROSS, "Doji": talib.CDLDOJI,
-      "DragonflyDoji": talib.CDLDRAGONFLYDOJI,
-      "GravestoneDoji": talib.CDLGRAVESTONEDOJI,
-      "ShootingStar": talib.CDLSHOOTINGSTAR,
-      "MorningStar": talib.CDLMORNINGSTAR, "EveningStar": talib.CDLEVENINGSTAR,
-      "ThreeWhiteSoldiers": talib.CDL3WHITESOLDIERS,
-      "ThreeBlackCrows": talib.CDL3BLACKCROWS, "Marubozu": talib.CDLMARUBOZU,
-      "PiercingLine": talib.CDLPIERCING,
-      "DarkCloudCover": talib.CDLDARKCLOUDCOVER, }
+                "InvertedHammer": talib.CDLINVERTEDHAMMER,
+                "Engulfing": talib.CDLENGULFING, "Harami": talib.CDLHARAMI,
+                "HaramiCross": talib.CDLHARAMICROSS, "Doji": talib.CDLDOJI,
+                "DragonflyDoji": talib.CDLDRAGONFLYDOJI,
+                "GravestoneDoji": talib.CDLGRAVESTONEDOJI,
+                "ShootingStar": talib.CDLSHOOTINGSTAR,
+                "MorningStar": talib.CDLMORNINGSTAR,
+                "EveningStar": talib.CDLEVENINGSTAR,
+                "ThreeWhiteSoldiers": talib.CDL3WHITESOLDIERS,
+                "ThreeBlackCrows": talib.CDL3BLACKCROWS,
+                "Marubozu": talib.CDLMARUBOZU,
+                "PiercingLine": talib.CDLPIERCING,
+                "DarkCloudCover": talib.CDLDARKCLOUDCOVER, }
 
     matches = []
     seen_dates = set()
@@ -750,8 +759,8 @@ class PatternRecognitionTool(BaseTool):
       for i, val in enumerate(values):
         if abs(val) >= min_strength and dates[i] not in seen_dates:
           matches.append({"date": dates[i], "pattern": pattern_name,
-            "direction": "bullish" if val > 0 else "bearish",
-            "value": int(val)})
+                          "direction": "bullish" if val > 0 else "bearish",
+                          "value": int(val)})
           seen_dates.add(dates[i])
 
     # -- Custom patterns --
