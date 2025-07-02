@@ -19,9 +19,10 @@ def run_analysis_and_crew(symbol: str) -> str:
   # First run the pattern analysis to generate the JSON file
   print(f"Running pattern analysis for {symbol}...")
   run_pattern_analysis(symbol)
-  # Then run the crew to process the generated file
-  print(f"Running crew analysis for {symbol}...")
-  return StockAnalysisCrew().crew()
+  # CrewAI-native invocation:
+  crew_instance = StockAnalysisCrew()
+  crew_instance._symbol = [symbol]  # ✅ Store symbol globally in the instance
+  return crew_instance.build_market_brief().kickoff()
 
 
 def generate_fallback_report():
@@ -41,7 +42,8 @@ def main() -> None:
   print('-------------------------------')
 
   # Get symbol from user input
-  symbol = input("Enter the symbol for which you want to forecast: ").strip().upper()
+  symbol = input(
+    "Enter the symbol for which you want to forecast: ").strip().upper()
   if not symbol:
     symbol = "MSFT"  # Default if no input
     print(f"No symbol provided, using default: {symbol}")

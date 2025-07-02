@@ -5,6 +5,7 @@ import logging
 import os
 import time
 from pathlib import Path
+from pydantic import BaseModel, Field, field_validator
 
 import requests
 import talib
@@ -77,19 +78,64 @@ def _get_cache_path(name: str, key: str, ttl: int | None = None) -> Path | None:
 
 
 # ------------- DATA HARVESTER TOOLS ----------------------------------- #
-class PoliticalNewsTool(BaseTool):
-  name: str = "PoliticalNewsTool"
-  description: str = "Fetch top political or macro headlines."
+class PoliticalNewsToolSchema(BaseModel):
+  symbol: str   = Field(..., description="Ticker, alphabetic only, e.g. NVDA")
+  query:  str   = Field(..., description="Non-empty free-text search query")
+  days_back: int = Field(..., ge=1, le=365,
+                         description="Look-back window (1-365 days)")
 
-  def _run(self, query: str = "politics OR policy", days_back: int = 1):
-    import hashlib, json, os
+  # Extra safety – uppercase tickers & strip strings
+  @field_validator("symbol")
+  @classmethod
+  def _norm_symbol(cls, v: str) -> str:
+    v = v.strip().upper()
+    if not v.isalpha():
+      raise ValueError("symbol must contain only alphabetic chars")
+    return v
+
+  @field_validator("query")
+  @classmethod
+  def _norm_query(cls, v: str) -> str:
+    v = v.strip()
+    if not v:
+      raise ValueError("query cannot be empty")
+    return v
+
+
+
+class PoliticalNewsTool(BaseTool):
+  """
+  Fetches raw political / policy-related news that may affect a given
+  stock symbol.  Arguments are validated by `PoliticalNewsToolSchema`
+  before this method is invoked.
+  """
+  name: str = "PoliticalNewsTool"
+  description: str = (
+    "Retrieves political or policy news headlines for the supplied "
+    "ticker symbol within a specified look-back window (days_back)."
+  )
+
+  # LangChain / CrewAI will use this schema for validation
+  args_schema = PoliticalNewsToolSchema
+  def _run(self, query: str = None, symbol: str = None, days_back: int = 5):
+    import hashlib, json, os, datetime
+    logging.info(f"[DEBUG] Received input -> query: {query}, symbol: {symbol}, days_back: {days_back}")
+    if symbol and not query:
+      query = f"{symbol} AND (politics OR policy)"
+    elif not query:
+      query = "politics OR policy"
+
+    logging.info(f"Running PoliticalNewsTool with query: {query}")
 
     api_key = os.getenv("NEWSAPI_KEY")
     if not api_key:
       raise ValueError("Missing NEWSAPI_KEY for PoliticalNewsTool")
 
+    today = datetime.date.today()
+    from_date = today - datetime.timedelta(days=days_back)
+
     url = (f"https://newsapi.org/v2/everything"
-           f"?q={query}&from={days_back}d&sortBy=publishedAt&pageSize=20"
+           f"?q={query}&from={from_date.isoformat()}&sortBy=publishedAt&pageSize=20"
            f"&apiKey={api_key}")
 
     cache_key = hashlib.sha1(url.encode()).hexdigest()[:8]
@@ -97,20 +143,22 @@ class PoliticalNewsTool(BaseTool):
 
     if cache_path and cache_path.exists():
       with open(cache_path) as f:
-        return json.load(f)
+        articles = json.load(f)
+    else:
+      try:
+        data = _request_with_retries(url, rate_limiter=RateLimiter(1))
+        articles = data.get("articles", [])
+        if len(articles) > 50:
+          articles = articles[:50]
+        if cache_path:
+          with open(cache_path, "w") as f:
+            json.dump(articles, f)
+      except Exception as e:
+        raise RuntimeError(f"Failed to fetch political news: {str(e)}")
 
-    try:
-      data = _request_with_retries(url, rate_limiter=RateLimiter(1))
-      articles = data.get("articles", [])
-      raw = json.dumps(articles)
-      if len(articles) > 50:
-        articles = articles[:50]
-    except Exception as e:
-      raise RuntimeError(f"Failed to fetch political news: {str(e)}")
-
-    if cache_path:
-      with open(cache_path, "w") as f:
-        json.dump(articles, f)
+    # Save to raw_news.json for downstream tasks
+    with open("raw_news.json", "w") as f:
+      json.dump(articles, f)
 
     return articles
 

@@ -1,22 +1,16 @@
 # import agentops
-from functools import lru_cache
-from pathlib import Path
-
 import yaml
 from crewai import Agent, Crew, Process, Task
 from crewai.project import CrewBase, agent, crew, task
 from crewai_tools import WebsiteSearchTool, ScrapeWebsiteTool, TXTSearchTool
 from dotenv import load_dotenv
+from functools import lru_cache
+from pathlib import Path
 
 from tools.market_data_tools import (PoliticalNewsTool, ETFDataTool,
                                      EquityFundamentalsTool, SentimentScanTool,
-                                     FundamentalMathTool,
-                                     HistoricalFinancialsTool, MarketPriceTool,
                                      GlobalEventsTool, MarkdownFormatterTool,
-                                     SlackPosterTool, GrammarCheckTool,
-                                     ForecastSignalTool, PatternRecognitionTool)
-from tools.ohlc_formatter_tool import OHLCFormatterTool
-from tools.run_analysis import main as run_pattern_analysis
+                                     SlackPosterTool, GrammarCheckTool)
 
 load_dotenv()
 
@@ -50,32 +44,10 @@ def get_appropriate_llm(task_complexity: str) -> LLM:
 #     api_key=AGENTOPS_API_KEY,
 #     default_tags=['crewai']
 # )
-# @CrewBase
+@CrewBase
 class StockAnalysisCrew:
   agents_config = 'config/agents.yaml'
   tasks_config = 'config/tasks.yaml'
-
-  def fundamental_analysis_tasks(self) -> list[Task]:
-    """Split fundamental analysis into smaller 2x2 batches to avoid LLM token limits."""
-    etf_chunks = self._chunk(self.etf_watchlist(), 2)
-    equity_chunks = self._chunk(self.equity_watchlist(), 2)
-
-    tasks = []
-    num_tasks = max(len(etf_chunks), len(equity_chunks))
-    for i in range(num_tasks):
-      etfs = etf_chunks[i] if i < len(etf_chunks) else []
-      equities = equity_chunks[i] if i < len(equity_chunks) else []
-
-      if not etfs and not equities:
-        continue  # Skip empty tasks
-
-      input_data = {"etf_symbols": ", ".join(etfs),
-                    "equity_symbols": ", ".join(equities)}
-
-      tasks.append(Task(config=self.tasks_yaml()["fundamental_analysis"],
-                        agent=self.valuation_engine_agent(), input=input_data))
-
-    return tasks
 
   @lru_cache(maxsize=1)
   def agents_yaml(self) -> dict:
@@ -91,126 +63,78 @@ class StockAnalysisCrew:
     with open(Path(self.tasks_config), "r") as f:
       return yaml.safe_load(f)
 
-  # ------------------------------------------------------------------ #
-  # Helper accessors for the ETF and equity watch‑lists declared in    #
-  # config/agents.yaml under data_harvester.etf_watchlist / equity_…   #
-  # ------------------------------------------------------------------ #
-  @lru_cache(maxsize=1)
-  def etf_watchlist(self) -> list[str]:
-    return self.agents_yaml()["data_harvester"]["inputs"]["etf_watchlist"]
-
-  @lru_cache(maxsize=1)
-  def equity_watchlist(self) -> list[str]:
-    return self.agents_yaml()["data_harvester"]["inputs"]["equity_watchlist"]
+  # # ------------------------------------------------------------------ #
+  # # Helper accessors for the ETF and equity watch‑lists declared in    #
+  # # config/agents.yaml under data_harvester.etf_watchlist / equity_…   #
+  # # ------------------------------------------------------------------ #
+  # @lru_cache(maxsize=1)
+  # def etf_watchlist(self) -> list[str]:
+  #   return self.agents_yaml()["data_harvester"]["inputs"]["etf_watchlist"]
+  # 
+  # @lru_cache(maxsize=1)
+  # def equity_watchlist(self) -> list[str]:
+  #   return self.agents_yaml()["data_harvester"]["inputs"]["equity_watchlist"]
 
   @agent
   def data_harvester_agent(self) -> Agent:
     return Agent(config=self.agents_yaml()["data_harvester"], verbose=True,
                  llm=get_appropriate_llm("low"),
-                 tools=[PoliticalNewsTool(),  # Correctly instantiated objects
-                        ETFDataTool(), EquityFundamentalsTool(),
-                        SentimentScanTool(), GlobalEventsTool(), ])
+                 tools=[PoliticalNewsTool() ])
 
   @task
   def harvest_data(self) -> Task:
-    # pass ticker lists into the task so the prompt variables can expand
-    return Task(config=self.tasks_yaml()["harvest_data"],
-                agent=self.data_harvester_agent(),
-                input={"etf_symbols": ", ".join(self.etf_watchlist()),
-                       "equity_symbols": ", ".join(self.equity_watchlist()),
-                       "query": (
-                         "((interest rates OR inflation OR recession OR central bank OR Fed OR ECB OR bond yields) "
-                         "OR (tech stocks OR semiconductor OR AI OR electric vehicles OR oil prices OR energy policy OR healthcare regulation)) "
-                         "AND (NVIDIA OR Tesla OR Apple OR Microsoft OR Amazon OR Meta OR Alphabet OR Netflix OR JPMorgan OR Berkshire OR Exxon OR UnitedHealth)"),
-                       "days_back": 2}, )
+    """
+    Executes the task to harvest data, handling potential errors in input and outputs.
+    """
+    try:
+      symbol_list = getattr(self, '_symbol', [])
+      if not symbol_list or not isinstance(symbol_list, list):
+        raise ValueError("Symbols are invalid or not provided.")
 
-  @agent
-  def valuation_engine_agent(self) -> Agent:
-    return Agent(config=self.agents_yaml()["valuation_engine"], verbose=True,
-                 llm=get_appropriate_llm("low"), tools=[FundamentalMathTool(),
-                                                        # Computes P/E, EV/EBITDA, valuation insights
-                                                        HistoricalFinancialsTool(),
-                                                        # Provides 3-year EPS data
-                                                        EquityFundamentalsTool(),
-                                                        # Adds current EPS, partial revenue
-                                                        ETFDataTool(),
-                                                        # Supports price, shares outstanding
-                                                        ])
+      # Ensure the symbols are correctly formatted as a comma-separated string
+      symbol_input = ", ".join(symbol_list)
+      query_string = (
+        f"({symbol_input} financial results OR {symbol_input} quarterly earnings OR {symbol_input} revenue OR "
+        f"{symbol_input} profit margins OR {symbol_input} stock movement OR {symbol_input} analyst opinions OR "
+        f"{symbol_input} institutional investors OR {symbol_input} sector outlook OR {symbol_input} recent news OR "
+        f"{symbol_input} market analysis OR {symbol_input} press releases OR macroeconomic influences like inflation, "
+        f"interest rates, or central bank policies affecting {symbol_input})"
+      )
+      print(">>>> Task input being passed to data_harvester_agent:", {
+        "symbol": symbol_input,
+        "query": query_string,
+        "days_back": 3
+      })
+      return Task(
+        config=self.tasks_yaml().get("harvest_data", {}),
+        agent=self.data_harvester_agent(),
+        input={
+          "symbol": symbol_input,
+          "query": query_string,
+          "days_back": 3
+        },
+      )
+    except KeyError as e:
+      raise RuntimeError(
+        f"Task configuration for harvest_data is missing or invalid: {e}")
+    except Exception as e:
+      raise RuntimeError(f"Error occurred in harvest_data task: {e}")
 
-  @task
-  def fundamental_analysis(self) -> Task:
-    return Task(config=self.tasks_yaml()["fundamental_analysis"],
-                agent=self.valuation_engine_agent(),
-                input={"etf_symbols": ", ".join(self.etf_watchlist()),
-                       "equity_symbols": ", ".join(self.equity_watchlist()), },
-                verbose=True, )
-
-  @agent
-  def pattern_scanner_agent(self) -> Agent:
-    return Agent(config=self.agents_yaml()["pattern_scanner"], verbose=True,
-                 llm=get_appropriate_llm("low"),
-                 tools=[MarketPriceTool(), ForecastSignalTool(),
-                        PatternRecognitionTool()
-                        # 🆕 Add technical-sentiment forecast logic
-                        ])
-
-  @task
-  def technical_analysis(self) -> Task | None:
-    print("Preparing technical analysis input...")
-    print("Technical Analysis Inputs:")
-    print("  ETF Symbols:", self.etf_watchlist())
-    print("  Equity Symbols:", self.equity_watchlist())
-
-    watchlist = self.etf_watchlist() + self.equity_watchlist()
-    if not watchlist:  # Skip if watchlist is empty.
-      print("[Warning] Skipping technical_analysis: No tickers in watchlist.")
-      return None
-
-    price_tool = MarketPriceTool()
-    formatter = OHLCFormatterTool()
-    summaries = []
-    symbol_to_close_prices = {}  # 🆕 collect close prices per ticker
-
-    for symbol in watchlist:
-      try:
-        raw_ohlc = price_tool._run(ticker=symbol, days=60)
-        # 🆕 Extract and store close prices
-        close_prices = [entry["close"] for entry in raw_ohlc if
-                        "close" in entry]
-        if len(close_prices) >= 35:
-          symbol_to_close_prices[symbol] = close_prices
-        else:
-          print(f"⚠️ Not enough close prices for {symbol}")
-        summary = formatter._run(ohlc_data=raw_ohlc, symbol=symbol, max_rows=5)
-        summaries.append(summary)
-      except Exception as e:
-        print(f"⚠️ Failed to fetch/format OHLC for {symbol}: {e}")
-        continue
-
-    combined_summary = "\n\n".join(summaries)
-    if not combined_summary:  # Ensure valid input is passed downstream.
-      print(
-          "[Warning] Skipping technical_analysis: No formatted data available.")
-      return None
-
-    print("  Combined summary:", combined_summary)
-    return Task(config=self.tasks_yaml()["technical_analysis"],
-                agent=self.pattern_scanner_agent(),
-                input={"etf_symbols": ", ".join(self.etf_watchlist()),
-                       "equity_symbols": ", ".join(self.equity_watchlist()),
-                       "formatted_ohlc_data": combined_summary, # Valid default.
-                       "close_price_map": symbol_to_close_prices,
-                       # 🆕 For ForecastSignalTool
-                       }, )
+  # @agent
+  # def pattern_scanner_agent(self) -> Agent:
+  #   return Agent(config=self.agents_yaml()["pattern_scanner"], verbose=True,
+  #                llm=get_appropriate_llm("low"),
+  #                tools=[MarketPriceTool(), ForecastSignalTool(),
+  #                       PatternRecognitionTool()
+  #                       # 🆕 Add technical-sentiment forecast logic
+  #                       ])
 
   @agent
   def report_composer_agent(self) -> Agent:
     return Agent(config=self.agents_yaml()["report_composer"], verbose=True,
-                 llm=get_appropriate_llm("high"),
+                 llm=get_appropriate_llm("low"),
                  tools=[MarkdownFormatterTool(), GrammarCheckTool(),
-                        SlackPosterTool(),
-                        # 🆕 Optional: send final report to Slack
-                        ])
+                        SlackPosterTool(), ])
 
   # -----------------------------
   # Helper to chunk lists
@@ -221,61 +145,77 @@ class StockAnalysisCrew:
 
   @task
   def compose_report_part1(self) -> Task | None:
-    """First report part: Generate report sections for part 1 of symbols."""
-    etfs = self.etf_watchlist()
-    equities = self.equity_watchlist()
+    """
+    Generate report sections for the first part of symbols with added error handling.
+    """
+    try:
+      symbols = getattr(self, '_symbol', [])
 
-    # Skip task if both watchlists are empty.
-    if not etfs and not equities:
-      print("[Warning] Skipping compose_report_part1: No tickers available")
+      # Validate symbols
+      if not symbols or not isinstance(symbols, list):
+        print("[Error] No tickers available or invalid data format.")
+        return None
+
+      # Get the first chunk of symbols
+      symbol_chunk = self._chunk(symbols, 10)[0] if len(symbols) > 0 else []
+      if not symbol_chunk:
+        print("[Warning] compose_report_part1: No tickers in the first chunk.")
+        return None
+
+      return Task(config=self.tasks_yaml().get("compose_report", {}),
+          agent=self.report_composer_agent(),
+          input={"symbol": ", ".join(symbol_chunk)})
+    except KeyError as e:
+      print(
+        f"[Error] Task configuration for compose_report_part1 is missing: {e}")
       return None
-
-    # Create chunks only if needed or valid.
-    etf_part1 = self._chunk(etfs, 10)[0] if len(etfs) > 0 else []
-    equity_part1 = self._chunk(equities, 6)[0] if len(equities) > 0 else []
-
-    # Skip task if both chunks are empty.
-    if not etf_part1 and not equity_part1:
-      print("[Warning] compose_report_part1: No tickers in first chunk.")
+    except Exception as e:
+      print(f"[Error] Unexpected error in compose_report_part1: {e}")
       return None
-
-    return Task(config=self.tasks_yaml()["compose_report"],
-                agent=self.report_composer_agent(),
-                input={"etf_symbols": ", ".join(etf_part1),
-                       "equity_symbols": ", ".join(equity_part1), }, )
 
   # @task
   def compose_report_part2(self) -> Task | None:
     """Second half of report: Handles remaining symbols not processed in part 1."""
-    etfs = self.etf_watchlist()
-    equities = self.equity_watchlist()
+    symbol = getattr(self, '_symbol', [])
 
     # Skip task if both watchlists don't have enough tickers for a second chunk.
-    has_etf_part2 = len(etfs) > 10
-    has_equity_part2 = len(equities) > 6
-    if not has_etf_part2 and not has_equity_part2:
+    has_symbol_part2 = len(symbol) > 10
+    if not has_symbol_part2:
       print(
           "[Warning] Skipping compose_report_part2: Not enough tickers to split")
       return None
 
     # Retrieve second chunks (safe with length check).
-    etf_part2 = self._chunk(etfs, 10)[1] if len(etfs) > 10 else []
-    equity_part2 = self._chunk(equities, 6)[1] if len(equities) > 6 else []
+    symbol_part2 = self._chunk(symbol, 10)[1] if len(symbol) > 10 else []
 
     # Skip task if both parts are empty.
-    if not etf_part2 and not equity_part2:
+    if not symbol_part2:
       print("[Warning] compose_report_part2: No tickers in second chunk.")
       return None
 
     return Task(config=self.tasks_yaml()["compose_report_followup"],
                 agent=self.report_composer_agent(),
                 output_file="daily_market_brief.md",
-                input={"etf_symbols": ", ".join(etf_part2),
-                       "equity_symbols": ", ".join(equity_part2), }, )
+                input={"symbol": ", ".join(symbol_part2), }, )
 
 
-  # @crew
-  def crew(self) -> None:
-    """Creates the Market Briefing Crew"""
-    print("Starting Market Briefing Crew...")
+  @crew
+  def build_market_brief(self) -> Crew:
+      """Creates the Market Briefing Crew based on the provided stock symbol."""
+      print(f"Starting Market Briefing Crew for symbol: {self._symbol}...")
+      tasks = [self.harvest_data()]
 
+      part1_task = self.compose_report_part1()
+      if part1_task:
+          tasks.append(part1_task)
+
+      compose_part2 = self.compose_report_part2()
+      if compose_part2 is not None:
+          tasks.append(compose_part2)
+
+      return Crew(
+          agents=[self.data_harvester_agent(), self.report_composer_agent()],
+          tasks=tasks,
+          process=Process.sequential,
+          verbose=True,
+      )
