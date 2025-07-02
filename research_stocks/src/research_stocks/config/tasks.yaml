@@ -11,6 +11,21 @@ harvest_data:
   expected_output: >
     ✅ Saved the output: raw_news.json
 
+enhance_forecast:
+  description: >
+    Load the merged JSON for the target symbol (`patterns`, `news_headlines`,
+    `stock_data`, `next_prediction`), ask the LLM to refine `next_prediction`
+    and write:
+      • enhanced_forecast_{symbol}.json  (with the updated next_prediction)
+      • enhanced_forecast_{symbol}.md    (narrative summary)
+  inputs:
+    symbol: "{symbol}"
+  expected_output: >
+    ✅ Successfully wrote enhanced_forecast_{symbol}.json and
+    enhanced_forecast_{symbol}.md
+  agent: forecast_enhancer_agent
+
+
 #fundamental_analysis:
 #  description: >
 #    For each symbol, perform a **standalone fundamental valuation**.
