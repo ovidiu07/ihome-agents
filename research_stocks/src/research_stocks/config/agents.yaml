@@ -41,7 +41,7 @@ forecast_enhancer:
     - enhanced_forecast_{symbol}.md        # narrative summary
   error_handling: >
     If the input file is missing or malformed, emit an empty stub with
-    "Data unavailable" and continue without halting downstream tasks.
+    "Data unavailable" and stop.
 
 report_composer:
   role: >
@@ -72,6 +72,4 @@ report_composer:
 
   error_handling: >
     If any section lacks content, include a placeholder: “No data available.”
-    Do not summarize or interpret data. Ensure that all sections are properly
-    titled and easy to scan. If a file is missing, continue gracefully and
-    annotate the absence in the report.
+    Do not summarize or interpret data. Stop execution

@@ -27,7 +27,6 @@ enhance_forecast:
     4. Return a new JSON object **with the same keys** but an updated
        `next_prediction`. Also output a 2-3 sentence markdown narrative
        explaining the adjustment.
-  agent: forecast_enhancer_agent
   inputs:
     symbol: "{symbol}"
     merged_json: "{merged_json}"
@@ -189,7 +188,7 @@ compose_report:
   use_llm: false
   tool:
     name: MarkdownFormatterTool
-    inputs:
+  inputs:
       json_path: "output/pattern_analysis_results_{symbol}.json"
   expected_output: >
       A Markdown string for {symbol}

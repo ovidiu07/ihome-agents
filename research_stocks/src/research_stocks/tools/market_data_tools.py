@@ -103,28 +103,35 @@ class PoliticalNewsToolSchema(BaseModel):
 
 class PoliticalNewsTool(BaseTool):
   """
-  Fetches raw political / policy-related news that may affect a given
-  stock symbol.  Arguments are validated by `PoliticalNewsToolSchema`
-  before this method is invoked.
+  Fetch raw policy- or politics-driven headlines that can move a given
+  stock. Arguments validated by `PoliticalNewsToolSchema`.
   """
   name: str = "PoliticalNewsTool"
   description: str = (
     "Retrieves political or policy news headlines for the supplied "
-    "ticker symbol within a specified look-back window (days_back).")
+    "ticker symbol within a specified look-back window (days_back)."
+  )
 
-  # LangChain / CrewAI will use this schema for validation
   args_schema = PoliticalNewsToolSchema
 
-  def _run(self, query: str = None, symbol: str = None, days_back: int = 5):
-    import hashlib, json, os, datetime
+  # ───────────────────────────── updated signature ────────────────────────────
+  def _run(
+      self,
+      query: str | None = None,
+      symbol: str | None = None,
+      days_back: int = 5,
+      **extra,                       # ← swallow NewsAPI kwargs (searchIn, sortBy…)
+  ):
+    import datetime, hashlib, json, os
     logging.info(
-        f"[DEBUG] Received input -> query: {query}, symbol: {symbol}, days_back: {days_back}")
+        f"[DEBUG] PoliticalNewsTool input  →  symbol={symbol}, "
+        f"days_back={days_back}, query={query!r}, extra={extra}"
+    )
+
     if symbol and not query:
       query = f"{symbol} AND (politics OR policy)"
     elif not query:
       query = "politics OR policy"
-
-    logging.info(f"Running PoliticalNewsTool with query: {query}")
 
     api_key = os.getenv("NEWSAPI_KEY")
     if not api_key:
@@ -133,39 +140,37 @@ class PoliticalNewsTool(BaseTool):
     today = datetime.date.today()
     from_date = today - datetime.timedelta(days=days_back)
 
-    # --- Build NewsAPI request with stronger filters ---
+    # ------------------ build parameter dict -------------------------------
     params = {
-      "q": query,                           # boolean expression
-      "from": from_date.isoformat(),        # look‑back window
-      "language": "en",                     # keep it consistent
-      "searchIn": "title,description",      # skip full body noise
-      "sortBy": "relevancy",                # rank best matches first
+      "q": query,
+      "from": from_date.isoformat(),
+      "language": "en",
+      "searchIn": "title,description",
+      "sortBy": "relevancy",
       "pageSize": 20,
       "apiKey": api_key,
     }
-    url = "https://newsapi.org/v2/everything?" + up.urlencode(params)
+    # merge any overrides (e.g. searchIn, language, sortBy)
+    params.update(extra)                 # ← NEW LINE
 
+    url = "https://newsapi.org/v2/everything?" + up.urlencode(params)
     cache_key = hashlib.sha1(url.encode()).hexdigest()[:8]
     cache_path = _get_cache_path(self.name, cache_key, ttl=3600)
 
+    # --------------------- cached fetch w/ retries -------------------------
     if cache_path and cache_path.exists():
       with open(cache_path) as f:
         articles = json.load(f)
     else:
-      try:
-        data = _request_with_retries(url, rate_limiter=RateLimiter(1))
-        articles = data.get("articles", [])
-        if len(articles) > 50:
-          articles = articles[:50]
-        if cache_path:
-          with open(cache_path, "w") as f:
-            json.dump(articles, f)
-      except Exception as e:
-        raise RuntimeError(f"Failed to fetch political news: {str(e)}")
+      data = _request_with_retries(url, rate_limiter=RateLimiter(1))
+      articles = data.get("articles", [])[:50]  # hard cap
+      if cache_path:
+        with open(cache_path, "w") as f:
+          json.dump(articles, f)
 
-    # Save to raw_news.json for downstream tasks
+    # dump to raw_news.json so downstream tasks can merge
     with open("raw_news.json", "w") as f:
-      json.dump(articles, f)
+      json.dump(articles, f, indent=2)
 
     return articles
 
