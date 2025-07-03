@@ -132,10 +132,15 @@ class StockAnalysisCrew:
     else:
       print("[Warning] enhance_forecast: No symbol available.")
       return None
+    merged_path = Path("output") / f"pattern_analysis_results_{symbol}.json"
+    if not merged_path.exists():
+      print("[Warning] merged JSON not found – skipping enhancer.")
+      return None
 
+    merged_text = merged_path.read_text(encoding="utf-8")
     return Task(config=self.tasks_yaml().get("enhance_forecast", {}),
                 agent=self.forecast_enhancer_agent(),
-                input={"symbol": symbol}, )
+                input={"symbol": symbol, "merged_json": merged_text})
 
   def _chunk(self, items: list[str], size: int) -> list[list[str]]:
     """Split a list into fixed-size chunks while preserving order."""
