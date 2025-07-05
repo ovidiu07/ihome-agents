@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import sys
+from pathlib import Path
 
 import pandas as pd
 
@@ -37,6 +38,7 @@ from .pattern_analysis.reporting import (export_analysis_results,
 from .pattern_analysis.forecasting import (refine_next_predictions,
                                           probabilistic_day_forecast,  # ← new forecaster signature
 )
+from .pattern_analysis.intraday_factors import collect_intraday_factors
 
 
 # ---------------------------------------------------------------------------
@@ -128,6 +130,13 @@ def main(symbol: str = "NVDA") -> None:
         f"    O={ohlc['o']:.2f}  H={ohlc['h']:.2f}  "
         f"L={ohlc['l']:.2f}  C={ohlc['c']:.2f}"
         f"  (80 % interval: {day_fcast['interval_80']})")
+
+  # ─── Collect intraday factor snapshot ─────────────────────────────────-
+  try:
+    factors_path = collect_intraday_factors(symbol, Path("output"))
+    print(f"\n📝 Intraday factors saved to {factors_path}")
+  except Exception as exc:
+    print(f"⚠️  Failed to collect intraday factors: {exc}")
 
 
 # ---------------------------------------------------------------------------
