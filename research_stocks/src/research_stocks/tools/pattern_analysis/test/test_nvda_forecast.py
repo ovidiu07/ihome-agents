@@ -8,6 +8,8 @@ from typing import Dict, Any, List, Optional, Tuple
 # ────────────────────────────────────────────────────────────────
 # 1)  REAL-WORLD OHLC: Historical NVDA data up to June 25
 #    – real data from Yahoo Finance for forecasting June 26
+
+# poetry run python test_nvda_forecast.py
 # ────────────────────────────────────────────────────────────────
 csv = """\
 Date,Open,High,Low,Close,Volume
@@ -56,8 +58,9 @@ Date,Open,High,Low,Close,Volume
 2025-06-20,145.45,146.20,142.65,143.85,242956200
 2025-06-23,142.50,144.78,142.03,144.17,154308900
 2025-06-24,145.56,147.96,145.50,147.90,187566100
-2025-06-25,149.27,154.45,149.26,154.31,269146500
 """
+#2025-06-25,149.27,154.45,149.26,154.31,269146500
+
 #
 # Open: 155.98
 # •	High: 156.72
@@ -71,10 +74,10 @@ ohlc_df = pd.read_csv(io.StringIO(csv), parse_dates=["Date"])
 # ────────────────────────────────────────────────────────────────
 # These patterns were identified in NVDA's price action leading up to June 25
 active_patterns = [
-  {"name": "Double Bottom",  "direction": "bullish"},
-  {"name": "Engulfing",      "direction": "bullish"},
-  {"name": "Doji",           "direction": "bullish"},
-  {"name": "Support Level",  "direction": "bullish"},
+    {"name": "Double Top",           "direction": "bearish"},
+    {"name": "Double Bottom",        "direction": "bullish"},
+    {"name": "Doji",                 "direction": "bullish"},
+    {"name": "Three White Soldiers", "direction": "bullish"},
 ]
 
 # ────────────────────────────────────────────────────────────────
@@ -83,11 +86,10 @@ active_patterns = [
 def get_pattern_reliability():
     """Return a dictionary of pattern reliability scores."""
     return {
-        "Double Bottom": 0.65,
-        "Engulfing": 0.58,
-        "Doji": 0.52,
-        "Support Level": 0.60,
-        "Head and Shoulders": 0.45,
+        "Double Bottom":        0.65,
+        "Double Top":           0.40,
+        "Doji":                 0.52,
+        "Three White Soldiers": 0.62,
     }
 
 # ────────────────────────────────────────────────────────────────
