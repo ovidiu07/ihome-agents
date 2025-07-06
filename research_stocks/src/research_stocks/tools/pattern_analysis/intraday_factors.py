@@ -214,8 +214,8 @@ def get_confirmed_patterns(symbol: str) -> List[dict]:
 def collect_intraday_factors(symbol: str, output_dir: Path) -> Path:
   """Collect all factors and export them as JSON."""
   output_dir.mkdir(parents=True, exist_ok=True)
-  # now = datetime.utcnow()
-  now = datetime(2025, 7, 2, 11, 0, 0)  # mocked UTC time (2025-07-02 11:00 UTC)
+  now = datetime.utcnow()
+  # now = datetime(2025, 7, 2, 11, 0, 0)  # mocked UTC time (2025-07-02 11:00 UTC)
   data = {"symbol": symbol.upper(),
           "timestamp": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
           "implied_move": get_implied_move(symbol),
