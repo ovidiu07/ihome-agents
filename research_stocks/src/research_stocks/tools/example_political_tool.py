@@ -1,3 +1,4 @@
+__test__ = False
 from tools.market_data_tools import PoliticalNewsTool
 
 

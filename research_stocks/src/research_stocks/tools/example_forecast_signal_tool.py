@@ -1,5 +1,6 @@
 # tools/test_forecast_signal_tool.py
 
+__test__ = False
 from tools.market_data_tools import ForecastSignalTool
 
 if __name__ == "__main__":
