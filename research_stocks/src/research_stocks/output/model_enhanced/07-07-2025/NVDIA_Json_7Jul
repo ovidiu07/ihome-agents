@@ -1,0 +1,80 @@
+{
+“enhanced_today_prediction”: {
+“direction”: “bullish”,
+“P_up”: 0.65,
+“confidence”: “medium”,
+“O”: 158.41,
+“H”: 161.42,
+“L”: 155.55,
+“C”: 159.96,
+“ci80”: [155.25, 162.71]
+},
+
+VS O3 directly prediction :
+Today’s OHLC – probability band	Price	Basis
+Open	$159.32	StockInvest fair-open model
+stockinvest.us
+High	$163.50	14-day ATR upper envelope (≈ +2.7 %)
+stockinvest.us
+Low	$154.92	14-day ATR lower envelope (≈ –2.7 %)
+stockinvest.us
+Close (my best-fit guess)	≈ $161 ± $1	Momentum + mean-reversion blend (see notes)
+
+“reasoning”: “Bullish pattern weight (0.68) exceeds bearish (0.00 counter-weighted after decay); median 20-day intraday range gives σ_est≈2.87. With net-positive news flow (AI-server demand, analyst upgrades) partly offset by export-curb headlines, we skew the Yardstick range modestly upward and lift prior confidence from 0.30 to 0.55 (medium). Close is set in the upper half of the estimated band to reflect sentiment, while 80 % interval remains wide amid macro headline risk.”,
+“risk_factors”: {
+“upside”: [
+“Sustained hyperscale AI-server orders boosting data-center revenue”,
+“Street price-target revisions (e.g., Mizuho to $185) prompting momentum buying”,
+“Foxconn/Hon Hai sales beats signalling tight GPU supply”,
+“Robotics TAM narrative expanding NVDA’s addressable market”
+],
+“downside”: [
+“US export-control expansion to Malaysia/Thailand throttling gray-market demand”,
+“China retaliation or accelerated domestic GPU substitution”,
+“Valuation compression if bond yields spike or AI cap-ex slows”,
+“High option-implied volatility risking sharp swing on thin summer liquidity”
+]
+},
+“news_summaries”: [
+{
+“url”: “https://www.channelnewsasia.com/business/foxconn-second-quarter-revenue-rises-1582-year-5221956”,
+“stance”: “bullish”,
+“score”: 0.55,
+“summary”: “Foxconn posts record Q2 sales on iPhone and Nvidia-server demand, guides higher for Q3.”
+},
+{
+“url”: “https://www.bloomberg.com/news/articles/2025-07-05/nvidia-partner-hon-hai-meets-sales-estimates-on-strong-ai-demand”,
+“stance”: “bullish”,
+“score”: 0.60,
+“summary”: “Hon Hai revenue grows 16 % YoY, citing robust AI-server orders linked to Nvidia GPUs.”
+},
+{
+“url”: “https://economictimes.indiatimes.com/news/international/us/3-89-trillion-nvidia-just-set-its-sights-on-robots-from-silicon-ceo-jensen-huang-says-its-the-future/articleshow/122269252.cms”,
+“stance”: “bullish”,
+“score”: 0.45,
+“summary”: “CEO Huang unveils humanoid-robot initiative, framing robotics as Nvidia’s next growth pillar.”
+},
+{
+“url”: “https://www.ndtvprofit.com/business/us-plans-ai-chip-curbs-on-malaysia-thailand-over-china-concerns”,
+“stance”: “bearish”,
+“score”: 0.70,
+“summary”: “Draft US rule seeks to block advanced Nvidia AI chips from Malaysia/Thailand trans-shipments to China.”
+},
+{
+“url”: “https://www.etfdailynews.com/2025/07/05/nvidia-nasdaqnvda-trading-up-1-4-after-analyst-upgrade/”,
+“stance”: “bullish”,
+“score”: 0.70,
+“summary”: “Mizuho lifts NVDA target to $185, stock hits new high on upgrade and lighter volume.”
+},
+{
+“url”: “https://economictimes.indiatimes.com/tech/technology/us-plans-ai-chip-curbs-on-malaysia-thailand-over-china-concerns/articleshow/122253707.cms”,
+“stance”: “bearish”,
+“score”: 0.65,
+“summary”: “Further coverage of looming US export curbs underscores geopolitical headwinds for Nvidia.”
+}
+],
+“meta”: {
+“symbol”: “NVDA”,
+“timestamp”: “2025-07-07T00:00:00Z”
+}
+}

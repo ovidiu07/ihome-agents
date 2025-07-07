@@ -1,0 +1,63 @@
+{
+  "enhanced_today_prediction": {
+    "direction": "bullish",
+    "P_up": 0.58,
+    "confidence": "medium",
+    "O": 137.75,
+    "H": 143.72,
+    "L": 132.92,
+    "C": 141.02,
+    "ci80": [133.89, 142.53]
+  },
+  "reasoning": "Analyst momentum is accelerating: Mizuho’s $152 PT and Melius’ $175 upgrade take the running tally of fresh buy-side raises to four in two weeks, lifting aggregate news sentiment to +1.05 (Σbull 2.2 – Σbear 1.15)  [oai_citation:0‡etfdailynews.com](https://www.etfdailynews.com/2025/07/04/mizuho-issues-positive-forecast-for-advanced-micro-devices-nasdaqamd-stock-price/) [oai_citation:1‡investors.com](https://www.investors.com/news/technology/amd-stock-upgraded-to-buy-on-ai-efforts/?utm_source=chatgpt.com) [oai_citation:2‡marketbeat.com](https://www.marketbeat.com/instant-alerts/advanced-micro-devices-inc-nasdaqamd-receives-consensus-recommendation-of-moderate-buy-from-analysts-2025-07-06/?utm_source=chatgpt.com). The sole pattern above threshold is a Morning Star (16 Jun) whose 0.23 weight sets a modest bullish technical backdrop. Volatility yardstick: 20-day median range 4.54 → σ_est 4.55, expanded 25 % to 5.68 as ≥2 bullish items score ≥0.6  [oai_citation:3‡etfdailynews.com](https://www.etfdailynews.com/2025/07/04/mizuho-issues-positive-forecast-for-advanced-micro-devices-nasdaqamd-stock-price/) [oai_citation:4‡investors.com](https://www.investors.com/news/technology/amd-stock-upgraded-to-buy-on-ai-efforts/?utm_source=chatgpt.com). Reuters flags a $1.5 bn China-curb revenue hit and HotHardware shows Nvidia at 70 % Amazon GPU share, tempering euphoria  [oai_citation:5‡reuters.com](https://www.reuters.com/business/chipmaker-amd-forecasts-second-quarter-revenue-above-estimates-2025-05-06/) [oai_citation:6‡hothardware.com](https://hothardware.com/news/geforce-rtx-5070-leads-charge-nvidia-dominates-sales-amazon). Institutional accumulation and a consensus PT near $139 provide downside cushion  [oai_citation:7‡marketbeat.com](https://www.marketbeat.com/instant-alerts/filing-us-capital-wealth-advisors-llc-grows-stake-in-advanced-micro-devices-inc-nasdaqamd-2025-07-07/?utm_source=chatgpt.com) [oai_citation:8‡nasdaq.com](https://www.nasdaq.com/articles/demystifying-advanced-micro-devices-insights-33-analyst-reviews). With no pre-market print, O anchors to 137.75; H/L set ±σ_est then skewed 5 % up; C placed in the upper quartile.",
+  "risk_factors": {
+    "upside": [
+      "Further analyst target hikes toward $160-plus spark momentum buying",
+      "AI-chip launch for China succeeds despite export controls",
+      "New GPU design wins in gaming laptops expand market share",
+      "Accelerated data-center orders pull 2026 revenue into 2025"
+    ],
+    "downside": [
+      "US/China export curbs deepen, cutting >5 % of 2025 sales",
+      "Nvidia’s lead widens as software ecosystem locks in hyperscalers",
+      "Delayed RDNA4 rollout stalls gaming refresh cycle",
+      "Macro risk-off move drains liquidity from high-beta semis"
+    ]
+  },
+  "news_summaries": [
+    {
+      "url": "https://www.etfdailynews.com/2025/07/04/mizuho-issues-positive-forecast-for-advanced-micro-devices-nasdaqamd-stock-price/",
+      "stance": "bullish",
+      "score": 0.75,
+      "summary": "Mizuho raises AMD price target to $152 and reiterates Outperform on strengthening AI-server demand  [oai_citation:9‡etfdailynews.com](https://www.etfdailynews.com/2025/07/04/mizuho-issues-positive-forecast-for-advanced-micro-devices-nasdaqamd-stock-price/)"
+    },
+    {
+      "url": "https://www.investors.com/news/technology/amd-stock-upgraded-to-buy-on-ai-efforts/",
+      "stance": "bullish",
+      "score": 0.65,
+      "summary": "Melius Research upgrades AMD to Buy and lifts target to $175, citing accelerating AI-accelerator traction  [oai_citation:10‡investors.com](https://www.investors.com/news/technology/amd-stock-upgraded-to-buy-on-ai-efforts/?utm_source=chatgpt.com)"
+    },
+    {
+      "url": "https://hothardware.com/news/geforce-rtx-5070-leads-charge-nvidia-dominates-sales-amazon",
+      "stance": "bearish",
+      "score": 0.55,
+      "summary": "Amazon June sales data show Nvidia with 70 % unit share vs AMD’s 28 %, underscoring competitive headwinds in GPUs  [oai_citation:11‡hothardware.com](https://hothardware.com/news/geforce-rtx-5070-leads-charge-nvidia-dominates-sales-amazon)"
+    },
+    {
+      "url": "https://www.reuters.com/business/chipmaker-amd-forecasts-second-quarter-revenue-above-estimates-2025-05-06/",
+      "stance": "bearish",
+      "score": 0.60,
+      "summary": "Reuters notes a projected $1.5 bn 2025 revenue hit from US export curbs on AI chips to China, though Q2 guide beats Street  [oai_citation:12‡reuters.com](https://www.reuters.com/business/chipmaker-amd-forecasts-second-quarter-revenue-above-estimates-2025-05-06/)"
+    },
+    {
+      "url": "https://www.marketbeat.com/instant-alerts/advanced-micro-devices-inc-nasdaqamd-receives-consensus-recommendation-of-moderate-buy-from-analysts-2025-07-06/",
+      "stance": "bullish",
+      "score": 0.50,
+      "summary": "MarketBeat shows 38-firm consensus at “Moderate Buy” with average 12-month PT $138.74, reflecting broadly positive sell-side bias  [oai_citation:13‡marketbeat.com](https://www.marketbeat.com/instant-alerts/advanced-micro-devices-inc-nasdaqamd-receives-consensus-recommendation-of-moderate-buy-from-analysts-2025-07-06/?utm_source=chatgpt.com)"
+    }
+  ],
+  "meta": {
+    "symbol": "AMD",
+    "timestamp": "2025-07-07T06:00:00Z"
+  }
+}

@@ -1,0 +1,81 @@
+{
+“enhanced_today_prediction”: {
+“direction”: “bullish”,
+“P_up”: 0.65,
+“confidence”: “high”,
+“O”: 212.47,
+“H”: 215.8,
+“L”: 210.0,
+“C”: 214.7,
+“ci80”: [210.4, 215.3]
+},
+“reasoning”: “Recent price action broke above multi-week resistance and sits atop a cluster of fresh double-bottom patterns whose combined weight >2.7, giving a strong technical bid. News flow is decisively positive: China iPhone sales turned +8 % YoY ￼ and multiple outlets confirm renewed momentum ￼ ￼. Exploration of AWS-like services could unlock new, high-margin revenue ￼ ￼, while Jefferies’ upgrade removes a bearish overhang ￼. CarPlay push-back provides a modest drag ￼, but longer-term demand tailwinds such as a larger-battery iPhone 17 Pro Max ￼ keep sentiment skewed up. Median 20-session range (≈ $3.7) yields σ_est ≈ $2.23; two high-impact bullish stories within 24 h triggered the +25 % expansion. Skewing the band upward sets a top-half close near $214.7. Confidence is high given alignment of patterns, trend and news (aggregate net-bull score ≈ +0.8).”,
+“risk_factors”: {
+“upside”: [
+“Sustained China volume rebound boosts FY-25 revenue”,
+“Launch of developer cloud services adds high-margin growth”,
+“AI-driven product refresh cycles extend upgrade demand”,
+“Accelerated buybacks on cash repatriation”
+],
+“downside”: [
+“Automaker resistance to CarPlay Ultra slows services penetration”,
+“EU and US regulatory actions on App Store or AI practices”,
+“Macro slow-down dampens consumer electronics spending”,
+“Supply-chain or geopolitical shocks affecting China production”
+]
+},
+“news_summaries”: [
+{
+“url”: “https://www.macrumors.com/2025/07/04/iphone-sales-finally-bounce-back-in-china/”,
+“stance”: “bullish”,
+“score”: 0.70,
+“summary”: “Counterpoint says Q2-25 iPhone sales in China rose 8 % YoY, ending a two-year slide and lifting Apple back to #3 vendor.  ￼”
+},
+{
+“url”: “https://wccftech.com/apple-once-considered-offering-aws-cloud-based-services-to-developers/”,
+“stance”: “bullish”,
+“score”: 0.50,
+“summary”: “Leaked documents show Apple evaluated ‘Project ACDC’ to sell cloud server capacity to developers, a multibillion-dollar TAM.  ￼”
+},
+{
+“url”: “https://www.macobserver.com/tips/how-apple-quietly-planned-to-take-on-aws/”,
+“stance”: “bullish”,
+“score”: 0.45,
+“summary”: “MacObserver echoes internal push for Apple-run data-center chips powering third-party cloud, hinting at vertical integration gains.  ￼”
+},
+{
+“url”: “https://wccftech.com/iphone-growth-gains-momentum-in-china-after-two-years/”,
+“stance”: “bullish”,
+“score”: 0.70,
+“summary”: “Aggressive pricing and local promotions helped iPhone reclaim share in China, reinforcing momentum noted by Counterpoint.  ￼”
+},
+{
+“url”: “https://www.macobserver.com/tips/apples-carplay-ultra-faces-resistance-from-carmakers-despite-new-patent/”,
+“stance”: “bearish”,
+“score”: 0.40,
+“summary”: “Major automakers push back on next-gen CarPlay Ultra integration, citing data-ownership concerns that could delay rollout.  ￼”
+},
+{
+“url”: “https://www.forbes.com/sites/davidphelan/2025/07/05/apple-iphone-17-pro-max-new-leak-confirms-major-design-upgrade/”,
+“stance”: “bullish”,
+“score”: 0.30,
+“summary”: “Leak points to record-size battery in iPhone 17 Pro Max, addressing long-standing user pain-point and boosting upgrade intent.  ￼”
+},
+{
+“url”: “https://www.forbes.com/sites/ewanspence/2025/07/03/apple-news-headlines-iphone-17-display-iphone-fold-macbook-pro-m5-beats-airpods-sleep/”,
+“stance”: “neutral”,
+“score”: 0.20,
+“summary”: “Weekly roundup covers foldable rumors, MacBook delays and mixed device pipeline; overall tone balanced.  ￼”
+},
+{
+“url”: “https://biztoc.com/x/ac997a1c023962b1”,
+“stance”: “bullish”,
+“score”: 0.25,
+“summary”: “Jefferies lifts AAPL to ‘Hold’ from ‘Underperform’, raises PT to $188, citing AI optionality though noting valuation stretch.  ￼”
+}
+],
+“meta”: {
+“symbol”: “AAPL”,
+“timestamp”: “2025-07-07T00:00:00Z”
+}
+}

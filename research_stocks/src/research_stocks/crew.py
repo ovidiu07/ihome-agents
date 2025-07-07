@@ -38,6 +38,7 @@ SYMBOL_ALIASES = {# 1‒10
   "AAPL": ["Apple", "Apple Inc", "Apple Incorporated"],
   "MSFT": ["Microsoft", "Microsoft Corp", "Microsoft Corporation"],
   "GOOGL": ["Alphabet", "Alphabet Inc", "Google", "Google LLC"],
+  "GOOG": ["Google", "Alphabet Inc", "Alphabet Class C"],
   "AMZN": ["Amazon", "Amazon.com", "Amazon.com Inc"],
   "TSLA": ["Tesla", "Tesla Inc", "Tesla Motors"],
   "NVDA": ["Nvidia", "NVIDIA Corp", "NVIDIA Corporation"],

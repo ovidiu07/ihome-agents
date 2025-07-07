@@ -100,95 +100,122 @@ def _label_patterns(df: pd.DataFrame, patterns: List[Dict]) -> pd.DataFrame:
   return labeled_df
 
 
-def refine_next_predictions(results: Dict[str, Any], df: pd.DataFrame,
-    days: int = 1, weight_pattern: float = 0.3,
-    weight_volatility: float = 0.7) -> Dict[str, Any]:
+def refine_next_predictions(
+    results: Dict[str, Any],
+    df: pd.DataFrame,
+    days: int = 1,
+    weight_pattern: float = 0.4,
+    weight_volatility: float = 0.6,
+    atr_window: int = 14,
+    hi_lo_multiplier_up: float = 1.6,
+    hi_lo_multiplier_dn: float = 1.4,
+) -> Dict[str, Any]:
   """
-  Refine predictions for the next period based on pattern analysis.
+  Blend pattern bias with volatility statistics to produce a next-period
+  OHLC forecast.
 
-  Args:
-      results: Dictionary with analysis results
-      df: DataFrame with OHLC data
-      days: Number of days to forecast
-      weight_pattern: Weight for pattern-based prediction
-      weight_volatility: Weight for volatility-based prediction
-
-  Returns:
-      Updated results dictionary with refined predictions
+  Parameters
+  ----------
+  weight_pattern / weight_volatility
+      Must sum to 1.  The first biases the *direction*, the second the
+      *magnitude* (ATR-based envelope).
+  atr_window
+      Rolling window for the ATR.
+  hi_lo_multiplier_up / hi_lo_multiplier_dn
+      How many ATRs above / below to place the initial volatility band.
+      (Allows asymmetric tails.)
   """
-  # Create a copy of results to avoid modifying the original
-  refined_results = results.copy()
+  if abs(weight_pattern + weight_volatility - 1.0) > 1e-6:
+    raise ValueError("weights must sum to 1")
 
-  # If no patterns or not enough data, return original results
-  if not results.get('patterns') or len(df) < 30:
-    return refined_results
+  out = results.copy()
+  if not results.get("patterns") or len(df) < atr_window + 1:
+    return out  # not enough info – leave as is
 
-  # Get the latest data point
   latest = df.iloc[-1]
+  close = latest["Close"]
 
-  # Calculate recent volatility (ATR)
-  high_low = df['High'] - df['Low']
-  high_close = abs(df['High'] - df['Close'].shift())
-  low_close = abs(df['Low'] - df['Close'].shift())
-  tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
-  atr = tr.rolling(14).mean().iloc[-1]
+  # ── 1.  Volatility baseline ─────────────────────────────────────────
+  tr = pd.concat(
+      [
+        df["High"] - df["Low"],
+        (df["High"] - df["Close"].shift()).abs(),
+        (df["Low"] - df["Close"].shift()).abs(),
+        ],
+      axis=1,
+  ).max(axis=1)
+  atr = tr.rolling(atr_window, min_periods=atr_window).mean().iloc[-1]
 
-  # Initialize prediction
-  prediction = {'direction': 'neutral', 'confidence': 0.5, 'O': latest['Open'],
-                'H': latest['High'], 'L': latest['Low'], 'C': latest['Close']}
+  vol_hi = close + hi_lo_multiplier_up * atr
+  vol_lo = close - hi_lo_multiplier_dn * atr
 
-  # Count bullish and bearish patterns
-  patterns = results.get('patterns', [])
-  recent_patterns = [p for p in patterns if
-                     pd.to_datetime(p['end_date']) >= pd.to_datetime(
-                         df.iloc[-10]['Date'])]
+  # ── 2.  Pattern-derived bias & confidence ───────────────────────────
+  recency_cutoff = pd.Timestamp(df.iloc[-10]["Date"])
+  pats = [
+    p for p in results["patterns"]
+    if pd.Timestamp(p["end_date"]) >= recency_cutoff
+  ]
 
-  bullish_count = sum(1 for p in recent_patterns if p['direction'] == 'bullish')
-  bearish_count = sum(1 for p in recent_patterns if p['direction'] == 'bearish')
+  # Weighted counts (use |value| as crude strength; default 1)
+  bull_score = sum((p.get("value", 1) or 1) for p in pats
+                   if p["direction"] == "bullish")
+  bear_score = sum((p.get("value", 1) or 1) for p in pats
+                   if p["direction"] == "bearish")
 
-  # Determine direction based on pattern counts
-  if bullish_count > bearish_count:
-    pattern_direction = 'bullish'
-    pattern_confidence = min(0.5 + (bullish_count - bearish_count) * 0.1, 0.9)
-  elif bearish_count > bullish_count:
-    pattern_direction = 'bearish'
-    pattern_confidence = min(0.5 + (bearish_count - bullish_count) * 0.1, 0.9)
+  if bull_score > bear_score:
+    pat_dir = "bullish"
+    pat_conf = min(0.2 + 0.15 * math.log1p(bull_score - bear_score), 0.9)
+  elif bear_score > bull_score:
+    pat_dir = "bearish"
+    pat_conf = min(0.2 + 0.15 * math.log1p(bear_score - bull_score), 0.9)
   else:
-    pattern_direction = 'neutral'
-    pattern_confidence = 0.5
+    pat_dir = "neutral"
+    pat_conf = 0.0
 
-  # Calculate volatility-based price ranges
-  volatility_high = latest['Close'] + atr
-  volatility_low = latest['Close'] - atr
+  # ── 3.  Blend direction  ────────────────────────────────────────────
+  final_bias_score = (weight_pattern * (1 if pat_dir == "bullish"
+                                        else -1 if pat_dir == "bearish"
+  else 0)
+                      )
+  # could blend in other factors later
 
-  # Blend pattern and volatility predictions
-  if pattern_direction == 'bullish':
-    prediction['direction'] = 'bullish'
-    prediction['confidence'] = pattern_confidence
-    prediction['H'] = latest['Close'] + atr * (1 + pattern_confidence * 0.5)
-    prediction['L'] = max(latest['Close'] - atr * 0.5, volatility_low)
-    prediction['C'] = latest['Close'] + (
-        prediction['H'] - latest['Close']) * pattern_confidence
-  elif pattern_direction == 'bearish':
-    prediction['direction'] = 'bearish'
-    prediction['confidence'] = pattern_confidence
-    prediction['H'] = min(latest['Close'] + atr * 0.5, volatility_high)
-    prediction['L'] = latest['Close'] - atr * (1 + pattern_confidence * 0.5)
-    prediction['C'] = latest['Close'] - (
-        latest['Close'] - prediction['L']) * pattern_confidence
+  if final_bias_score > 0.05:
+    direction = "bullish"
+  elif final_bias_score < -0.05:
+    direction = "bearish"
   else:
-    # Neutral case - use volatility-based range
-    prediction['H'] = volatility_high
-    prediction['L'] = volatility_low
-    prediction['C'] = latest['Close']
+    direction = "neutral"
 
-  # Set the next day's open near the previous close
-  prediction['O'] = latest['Close'] * (1 + np.random.normal(0, 0.005))
+  # ── 4.  Price targets  ──────────────────────────────────────────────
+  if direction == "bullish":
+    high = vol_hi
+    low = close - 0.6 * atr        # shallow pullback
+    close_next = close + 0.7 * (high - close) * weight_pattern
+  elif direction == "bearish":
+    high = close + 0.4 * atr       # limited upside
+    low = vol_lo
+    close_next = close - 0.7 * (close - low) * weight_pattern
+  else:
+    high, low = vol_hi, vol_lo
+    close_next = close
 
-  # Update results with prediction
-  refined_results['next_prediction'] = prediction
+  # Gap/open modelling — use historical open-to-prior-close gap
+  gap_pct = ((df["Open"] / df["Close"].shift()) - 1).dropna()
+  oc_gap_pct = gap_pct.std(ddof=0)
 
-  return refined_results
+  # Guard-rails: 0.1 % … 5 % typical for liquid large-caps
+  oc_gap_pct = float(np.clip(oc_gap_pct, 0.001, 0.05))
+  open_next = close * (1 + np.random.normal(0, oc_gap_pct))
+
+  out["next_prediction"] = {
+    "direction": direction,
+    "confidence": round(max(pat_conf, 0.25), 2),
+    "O": round(float(open_next), 2),
+    "H": round(float(high), 2),
+    "L": round(float(low), 2),
+    "C": round(float(close_next), 2),
+  }
+  return out
 
 
 class _OHLCForecaster:
