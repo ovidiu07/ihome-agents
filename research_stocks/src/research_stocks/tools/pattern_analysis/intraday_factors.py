@@ -15,6 +15,7 @@ import pandas as pd
 import numpy as np
 import yfinance as yf
 from textblob import TextBlob
+import pandas_market_calendars as mcal
 
 # Optional imports that may not be installed by default
 try:
@@ -22,6 +23,54 @@ try:
 except Exception:  # pragma: no cover - optional dependency
   NewsApiClient = None  # type: ignore
 
+
+def _last_nyse_session(day: Union[datetime, date]) -> date:
+  """
+  Return the most recent NYSE session **strictly before** `day`
+  if `day` is a trading date *in progress*, otherwise the session on `day`.
+  Accepts either datetime or date.
+  """
+  # If we get a datetime that is still *today* before 16:00 ET,
+  # roll back one calendar day so “previous close” is correct.
+  if isinstance(day, datetime):
+    ny_time = day.astimezone(pytz.timezone("America/New_York"))
+    if ny_time.time() < datetime.strptime("16:00", "%H:%M").time():
+      day = (ny_time - timedelta(days=1)).date()
+    else:
+      day = ny_time.date()
+
+  ts = pd.Timestamp(day)
+  nyse = mcal.get_calendar("XNYS")
+  last = nyse.valid_days(end_date=ts, start_date=ts - pd.Timedelta("10D"))[-1]
+  return last.tz_convert("America/New_York").date()
+
+def _download_1m(symbol: str, day: date, max_back: int = 5) -> pd.DataFrame:
+  """
+  Download 1-minute bars for `symbol` on the latest NYSE session at or before
+  `day`.  Walks back up to `max_back` sessions until data is found.
+  """
+  current = _last_nyse_session(day)        # ensure we start on a real session
+
+  for _ in range(max_back):
+    df = yf.download(
+        symbol,
+        start=current.strftime("%Y-%m-%d"),
+        end  =(current + timedelta(days=1)).strftime("%Y-%m-%d"),
+        interval="1m",
+        progress=False,
+        auto_adjust=False
+    )
+
+    if not df.empty:
+      # make index naïve UTC so `.between_time()` is happy
+      if df.index.tz is not None:
+        df = df.tz_convert("America/New_York").tz_localize(None)
+      return df
+
+    # step back one *session* (not one calendar day)
+    current = _last_nyse_session(current - timedelta(days=1))
+
+  raise RuntimeError(f"no intraday data found for {symbol} within {max_back} sessions")
 
 # ---------------------------------------------------------------------------
 # Helper functions
@@ -75,8 +124,7 @@ def get_opening_microstructure(symbol: str, date: datetime) -> dict:
   start = date.strftime("%Y-%m-%d")
   end = (date + timedelta(days=1)).strftime("%Y-%m-%d")
   try:
-    df = yf.download(symbol, start=start, end=end, interval="1m",
-                     progress=False)
+    df = _download_1m(symbol, date.date())
   except Exception as exc:
     raise RuntimeError(f"Failed to download intraday data: {exc}")
   if df.empty:
@@ -94,15 +142,9 @@ def get_opening_microstructure(symbol: str, date: datetime) -> dict:
 
 def get_prior_close_microstructure(symbol: str, now: datetime) -> dict:
   """VWAP trend and end-of-day volume stats for the previous NYSE session."""
-  ny = pytz.timezone("America/New_York")
-  today_ny = now.astimezone(ny).date()
-  prev_bd = (pd.Timestamp(today_ny) - BDay()).date()  # last biz-day
+  prev_bd = _last_nyse_session(now)  # last biz-day
 
-  # ➊  Download the full prior session (00:00-00:00 next day)
-  start = prev_bd.strftime("%Y-%m-%d")
-  end = (prev_bd + timedelta(days=1)).strftime("%Y-%m-%d")
-  df = yf.download(symbol, start=start, end=end, interval="1m", progress=False,
-                   auto_adjust=False)
+  df = _download_1m(symbol, prev_bd)
   if df.empty:
     raise RuntimeError("No intraday data for prior close window")
 
@@ -116,8 +158,9 @@ def get_prior_close_microstructure(symbol: str, now: datetime) -> dict:
   trend = "up" if slope > 0 else "down" if slope < 0 else "flat"
 
   return {"window": "14:00-16:00 ET", "date": prev_bd.isoformat(),
-    "vwap_trend": trend, "end_of_day_volume": int(df["Volume"].sum().item()),
-    "last_minute_volume": int(df["Volume"].iloc[-1].item()), }
+          "vwap_trend": trend,
+          "end_of_day_volume": int(df["Volume"].sum().item()),
+          "last_minute_volume": int(df["Volume"].iloc[-1].item()), }
 
 
 def get_active_catalysts(symbol: str, date: datetime) -> List[dict]:
@@ -147,7 +190,7 @@ def get_active_catalysts(symbol: str, date: datetime) -> List[dict]:
       if when.date() == date.date():
         catalysts.append(
             {"type": "earnings", "scheduled_time_utc": when.isoformat() + "Z",
-              "expected_vs_prior": None})
+             "expected_vs_prior": None})
   # (add other catalyst types here)
   return catalysts
 
@@ -163,14 +206,12 @@ def get_headline_sentiment(symbol: str) -> dict:
   now = datetime.utcnow()
   since = now - timedelta(hours=12)
   query = f"{symbol}"
-  res = client.get_everything(
-      q=query,
-      from_param=since.strftime("%Y-%m-%dT%H:%M:%S"),   # ← fixed
-      to=now.strftime("%Y-%m-%dT%H:%M:%S"),             # ← fixed
-      language="en",
-      sort_by="publishedAt",
-      page_size=100
-  )
+  res = client.get_everything(q=query,
+                              from_param=since.strftime("%Y-%m-%dT%H:%M:%S"),
+                              # ← fixed
+                              to=now.strftime("%Y-%m-%dT%H:%M:%S"),  # ← fixed
+                              language="en", sort_by="publishedAt",
+                              page_size=100)
   articles = res.get("articles", [])
   if not articles:
     raise RuntimeError("No headlines returned")
