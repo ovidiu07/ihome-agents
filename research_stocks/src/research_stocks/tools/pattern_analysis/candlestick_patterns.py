@@ -6,12 +6,26 @@ import pandas as pd
 import numpy as np
 
 
+def _rolling_slope(series: pd.Series, window: int = 3) -> pd.Series:
+  """Simple linear-regression slope over a rolling window."""
+  idx = np.arange(window)
+  coefs = (
+    series.rolling(window)
+    .apply(lambda y: np.polyfit(idx, y, 1)[0], raw=True)
+  )
+  return coefs
+
+def _volume_confirm(df: pd.DataFrame, mult: float = 1.2) -> pd.Series:
+  """True when today’s volume beats `mult` × 20-day average."""
+  return df["Volume"] >= mult * df["Volume"].rolling(20).mean()
+
+
 def _prep(df: pd.DataFrame) -> pd.DataFrame:
     """Return a copy of ``df`` to avoid mutating the caller."""
     return df.copy()
 
 
-def cs_hammer(df: pd.DataFrame) -> pd.Series:
+def cs_hammer(df: pd.DataFrame,  confirm: bool = True) -> pd.Series:
     """
     Detect hammer candlestick pattern.
     
@@ -40,11 +54,21 @@ def cs_hammer(df: pd.DataFrame) -> pd.Series:
         (body_length > 0) &
         (body_length / candle_range <= 0.4)
     )
-    
-    return is_hammer
+    # ── NEW trend & volume filters ────────────────────────────────────
+    downtrend = _rolling_slope(df['Close'], 3) < 0
+    vol_ok = _volume_confirm(df)
+
+    mask = is_hammer & downtrend & vol_ok
+
+    if confirm:
+        # next day closes above hammer high
+        next_close_up = df['Close'].shift(-1) > df['High']
+        mask &= next_close_up
+
+    return mask
 
 
-def cs_inverted_hammer(df: pd.DataFrame) -> pd.Series:
+def cs_inverted_hammer(df: pd.DataFrame,  confirm: bool = True) -> pd.Series:
     """
     Detect inverted hammer candlestick pattern.
     
@@ -66,7 +90,14 @@ def cs_inverted_hammer(df: pd.DataFrame) -> pd.Series:
         (body_length > 0) &
         (body_length / candle_range <= 0.4)
     )
-    
+    downtrend = _rolling_slope(df['Close'], 3) < 0
+    vol_ok = _volume_confirm(df)
+
+    mask = is_inverted_hammer & downtrend & vol_ok
+
+    if confirm:
+        mask &= df['Close'].shift(-1) > df['Close']
+
     return is_inverted_hammer
 
 
@@ -126,7 +157,7 @@ def cs_hanging_man(df: pd.DataFrame) -> pd.Series:
     return is_hanging_man
 
 
-def cs_doji(df: pd.DataFrame) -> pd.Series:
+def cs_doji(df: pd.DataFrame, confirm: bool = True) -> pd.Series:
     """
     Detect doji candlestick pattern.
     
@@ -144,8 +175,16 @@ def cs_doji(df: pd.DataFrame) -> pd.Series:
         (body_length <= 0.1 * candle_length) &
         (candle_length > 0)  # Ensure there is some price movement
     )
-    
-    return is_doji
+
+    vol_ok = _volume_confirm(df)
+    mask = is_doji & vol_ok
+
+    if confirm:
+        # require a >-1% move the next day in either direction
+        next_ret = df['Close'].shift(-1) / df['Close'] - 1
+        mask &= next_ret.abs() >= 0.01
+
+    return mask
 
 
 def cs_three_white_soldiers(df: pd.DataFrame) -> pd.Series:
@@ -307,11 +346,11 @@ def detect_candlestick_patterns(df: pd.DataFrame) -> pd.DataFrame:
     patterns = pd.DataFrame(index=df.index)
     
     # Single candle patterns
-    patterns['Hammer'] = cs_hammer(df)
-    patterns['Inverted Hammer'] = cs_inverted_hammer(df)
+    patterns['Hammer'] = cs_hammer(df, confirm= True)
+    patterns['Inverted Hammer'] = cs_inverted_hammer(df, confirm= True)
     patterns['Shooting Star'] = cs_shooting_star(df)
     patterns['Hanging Man'] = cs_hanging_man(df)
-    patterns['Doji'] = cs_doji(df)
+    patterns['Doji'] = cs_doji(df, confirm= True)
 
     # Multi-candle patterns
     patterns['Three White Soldiers'] = cs_three_white_soldiers(df)
