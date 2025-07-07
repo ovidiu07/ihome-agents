@@ -146,83 +146,61 @@ def detect_double_tops_bottoms_pivot(df: pd.DataFrame, pivots: pd.DataFrame) -> 
     pivot_high_idx = pivots.index[pivots['Pivot_High'] > 0].tolist()
     pivot_low_idx = pivots.index[pivots['Pivot_Low'] > 0].tolist()
 
-    # Need at least 2 pivot highs/lows to form a double top/bottom
-    if len(pivot_high_idx) < 2 or len(pivot_low_idx) < 2:
-        return patterns
+    # Check for double tops if we have enough highs
+    if len(pivot_high_idx) >= 2:
+        for i in range(len(pivot_high_idx) - 1):
+            idx1, idx2 = pivot_high_idx[i], pivot_high_idx[i+1]
 
-    # Check for double tops
-    for i in range(len(pivot_high_idx) - 1):
-        idx1, idx2 = pivot_high_idx[i], pivot_high_idx[i+1]
+            # Skip if the pivots are too close
+            if idx2 - idx1 < 5:
+                continue
 
-        # Skip if the pivots are too close
-        if idx2 - idx1 < 5:
-            continue
+            h1 = pivots.loc[idx1, 'Pivot_High']
+            h2 = pivots.loc[idx2, 'Pivot_High']
 
-        h1 = pivots.loc[idx1, 'Pivot_High']
-        h2 = pivots.loc[idx2, 'Pivot_High']
+            if 0.97 <= h1/h2 <= 1.03:
+                between_idx = df.loc[idx1:idx2].index
+                lowest_between = df.loc[between_idx, 'Low'].min()
+                height = h1 - lowest_between
+                if height > 0.03 * h1:
+                    pattern = {
+                        'pattern': 'Double Top',
+                        'start_date': df.loc[idx1, 'Date'],
+                        'end_date': df.loc[idx2, 'Date'],
+                        'height': height,
+                        'direction': 'bearish',
+                        'value': height / h1 * 100,
+                        'status': 'Confirmed'
+                    }
+                    patterns.append(pattern)
 
-        # Double top criteria:
-        # 1. h1 ≈ h2 (tops are approximately equal height)
-        # 2. There should be a significant trough between the tops
+    # Check for double bottoms if we have enough lows
+    if len(pivot_low_idx) >= 2:
+        for i in range(len(pivot_low_idx) - 1):
+            idx1, idx2 = pivot_low_idx[i], pivot_low_idx[i+1]
 
-        # Check if it's a double top
-        if 0.95 <= h1/h2 <= 1.05:  # Tops within 5% of each other
-            # Find the lowest point between the two tops
-            between_idx = df.loc[idx1:idx2].index
-            lowest_between = df.loc[between_idx, 'Low'].min()
+            # Skip if the pivots are too close
+            if idx2 - idx1 < 5:
+                continue
 
-            # Calculate pattern height
-            height = h1 - lowest_between
+            l1 = pivots.loc[idx1, 'Pivot_Low']
+            l2 = pivots.loc[idx2, 'Pivot_Low']
 
-            # Add pattern to results if height is significant
-            if height > 0.02 * h1:  # Height is at least 2% of price
-                pattern = {
-                    'pattern': 'Double Top',
-                    'start_date': df.loc[idx1, 'Date'],
-                    'end_date': df.loc[idx2, 'Date'],
-                    'height': height,
-                    'direction': 'bearish',
-                    'value': height / h1 * 100,  # Pattern significance as percentage
-                    'status': 'Confirmed'
-                }
-                patterns.append(pattern)
-
-    # Check for double bottoms
-    for i in range(len(pivot_low_idx) - 1):
-        idx1, idx2 = pivot_low_idx[i], pivot_low_idx[i+1]
-
-        # Skip if the pivots are too close
-        if idx2 - idx1 < 5:
-            continue
-
-        l1 = pivots.loc[idx1, 'Pivot_Low']
-        l2 = pivots.loc[idx2, 'Pivot_Low']
-
-        # Double bottom criteria:
-        # 1. l1 ≈ l2 (bottoms are approximately equal)
-        # 2. There should be a significant peak between the bottoms
-
-        # Check if it's a double bottom
-        if 0.95 <= l1/l2 <= 1.05:  # Bottoms within 5% of each other
-            # Find the highest point between the two bottoms
-            between_idx = df.loc[idx1:idx2].index
-            highest_between = df.loc[between_idx, 'High'].max()
-
-            # Calculate pattern height
-            height = highest_between - l1
-
-            # Add pattern to results if height is significant
-            if height > 0.02 * l1:  # Height is at least 2% of price
-                pattern = {
-                    'pattern': 'Double Bottom',
-                    'start_date': df.loc[idx1, 'Date'],
-                    'end_date': df.loc[idx2, 'Date'],
-                    'height': height,
-                    'direction': 'bullish',
-                    'value': height / l1 * 100,  # Pattern significance as percentage
-                    'status': 'Confirmed'
-                }
-                patterns.append(pattern)
+            if 0.97 <= l1/l2 <= 1.03:
+                between_idx = df.loc[idx1:idx2].index
+                highest_between = df.loc[between_idx, 'High'].max()
+                height = highest_between - l1
+                if height > 0.03 * l1:
+                    pattern = {
+                        'pattern': 'Double Bottom',
+                        'start_date': df.loc[idx1, 'Date'],
+                        'end_date': df.loc[idx2, 'Date'],
+                        'height': height,
+                        'direction': 'bullish',
+                        'value': height / l1 * 100,
+                        'status': 'Confirmed'
+                    }
+                    patterns.append(pattern)
 
     return patterns
 

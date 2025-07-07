@@ -10,7 +10,7 @@ from .candlestick_patterns import detect_candlestick_patterns
 from .chart_patterns import (detect_pivots, detect_head_shoulders_pivot,
                              detect_double_tops_bottoms_pivot,
                              detect_triangle_pivot)
-from .utils import get_pattern_reliability
+from .utils import get_pattern_reliability, slope
 
 
 def calculate_pattern_score(pattern: dict, df: pd.DataFrame,
@@ -26,8 +26,14 @@ def calculate_pattern_score(pattern: dict, df: pd.DataFrame,
   Returns:
       Score value
   """
-  # Base score from pattern reliability
-  base_score = get_pattern_reliability(pattern['pattern'])
+  # Base reliability
+  reliability = get_pattern_reliability(pattern['pattern'])
+
+  single_bar = pattern['pattern'] in [
+      'Hammer', 'Inverted Hammer', 'Shooting Star',
+      'Hanging Man', 'Doji']
+
+  base_score = reliability * (0.6 if single_bar else 1.0)
 
   # Pattern height factor (taller patterns are more significant)
   height_factor = pattern.get('height', 0) / df['Close'].mean() * 10
@@ -57,8 +63,28 @@ def calculate_pattern_score(pattern: dict, df: pd.DataFrame,
           volume_factor = min(avg_vol_pattern / avg_vol_before,
                               2.0)  # Cap at 2.0
 
-  # Calculate final score
-  score = base_score * (1 + height_factor) * duration_factor * volume_factor
+  # Body ratio factor for single candle patterns
+  body_factor = 1.0
+  if single_bar:
+    row = df[df['Date'] == pattern['end_date']]
+    if not row.empty:
+      body = abs(row['Close'].values[0] - row['Open'].values[0])
+      rng = row['High'].values[0] - row['Low'].values[0]
+      if rng > 0:
+        body_factor = 0.5 + min(body / rng, 1)
+
+  # Trend context factor
+  trend_factor = 1.0
+  lookback = df[df['Date'] < pattern['start_date']].tail(5)
+  if not lookback.empty:
+    trend = slope(lookback['Close'])
+    if pattern['direction'] == 'bullish' and trend >= 0:
+      trend_factor = 0.5
+    elif pattern['direction'] == 'bearish' and trend <= 0:
+      trend_factor = 0.5
+
+  score = base_score * (1 + height_factor) * duration_factor * \
+          volume_factor * body_factor * trend_factor
 
   # Normalize to a reasonable range (0-5)
   score = min(max(score, 0), 5)
@@ -152,7 +178,8 @@ def analyze_patterns(symbol: str, df: pd.DataFrame, df_summary: pd.DataFrame, wi
         # Determine pattern direction
         direction = 'bullish'
         if pattern_name in ['Shooting Star', 'Hanging Man',
-                            'Three Black Crows']:
+                            'Three Black Crows', 'Evening Star',
+                            'Bearish Harami']:
           direction = 'bearish'
 
         pattern = {'pattern': pattern_name,
