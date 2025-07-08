@@ -5,6 +5,7 @@
 import json
 import os
 from typing import Dict, Any
+from datetime import datetime
 
 import pandas as pd
 
@@ -57,6 +58,23 @@ def export_analysis_results(results: Dict[str, Any],
     json.dump(export_results, f, indent=2)
 
   print(f"Analysis results exported to {output_file}")
+
+
+def export_enhanced_results(results: Dict[str, Any], output_dir: str = "output/model_enhanced") -> None:
+  """Export enhanced analysis results with multi-timeframe data to a JSON file."""
+  os.makedirs(output_dir, exist_ok=True)
+
+  today = datetime.now().strftime("%d-%m-%Y")
+  symbol = results["symbol"]
+
+  date_dir = os.path.join(output_dir, today)
+  os.makedirs(date_dir, exist_ok=True)
+
+  filename = os.path.join(date_dir, f"{symbol}_Json_{today.split('-')[0]}{today.split('-')[1]}")
+  with open(filename, 'w') as f:
+    json.dump(results, f, indent=2)
+
+  print(f"📝 Enhanced results saved to {filename}")
 
 
 def print_summary_report(results: Dict[str, Any],
