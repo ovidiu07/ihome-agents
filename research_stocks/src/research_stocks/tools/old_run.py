@@ -63,6 +63,8 @@ def fetch_intraday_bars(symbol: str, api_key: str,
     # Store as string like the daily frame, e.g. '2025-06-26 11:03'
     df["Date"] = df["Date"].dt.strftime("%Y-%m-%d %H:%M")
 
+    df.drop(columns=["Datetime"], inplace=True)
+
     return df
 
   except Exception as exc:

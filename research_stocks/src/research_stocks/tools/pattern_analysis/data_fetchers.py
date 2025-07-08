@@ -3,7 +3,7 @@
 # Functions for fetching stock market data from various sources
 
 import os
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 
 import pandas as pd
 import requests
@@ -46,11 +46,63 @@ def fetch_intraday_bars(symbol: str, api_key: str,
     # Store as string like the daily frame, e.g. '2025-06-26 11:03'
     df["Date"] = df["Date"].dt.strftime("%Y-%m-%d %H:%M")
 
+    # Drop the raw datetime column to avoid mixed dtypes downstream
+    df.drop(columns=["Datetime"], inplace=True)
+
     return df
 
   except Exception as exc:
     print(f"❌ Error fetching intraday bars: {exc}")
     return None
+
+
+def fetch_polygon_intraday(symbol: str, api_key: str, interval: int = 15,
+                           days: int = 10, limit: int = 1000) -> pd.DataFrame:
+  """Fetch historical intraday data from Polygon.io."""
+
+  end_date = datetime.now()
+  start_date = end_date - timedelta(days=days)
+
+  url = (
+      f"https://api.polygon.io/v2/aggs/ticker/{symbol}/range/{interval}/minute/"
+      f"{start_date.strftime('%Y-%m-%d')}/{end_date.strftime('%Y-%m-%d')}"
+      f"?adjusted=true&sort=asc&limit={limit}&apiKey={api_key}"
+  )
+
+  try:
+    resp = requests.get(url, timeout=15)
+    resp.raise_for_status()
+    data = resp.json()
+
+    if not data.get("results"):
+      print(f"⚠️ No {interval}-minute data returned for the specified period.")
+      return pd.DataFrame()
+
+    bars = [
+        {
+            "Datetime": datetime.fromtimestamp(bar["t"] / 1000),
+            "Open": bar["o"],
+            "High": bar["h"],
+            "Low": bar["l"],
+            "Close": bar["c"],
+            "Volume": bar.get("v", 0),
+        }
+        for bar in data["results"]
+    ]
+
+    df = pd.DataFrame(bars)
+    df = df[df["Datetime"].dt.time.between(time(9, 30), time(16, 0))]
+
+    if "Date" not in df.columns:
+      df["Date"] = df["Datetime"]
+    df["Date"] = df["Date"].dt.strftime("%Y-%m-%d %H:%M")
+    df.drop(columns=["Datetime"], inplace=True)
+
+    return df
+
+  except Exception as exc:
+    print(f"❌ Error fetching {interval}-minute bars: {exc}")
+    return pd.DataFrame()
 
 
 def fetch_daily_history(symbol: str, period: str = "12mo") -> pd.DataFrame:
