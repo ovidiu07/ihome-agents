@@ -3,10 +3,10 @@
     "direction": "bullish",
     "P_up": 0.63,
     "confidence": "medium",
-    "O": 224.02,
-    "H": 230.30,
-    "L": 218.80,
-    "C": 228.00,
+    "O": 224.02,   223.0
+    "H": 230.30,   224.29
+    "L": 218.80,   222.37
+    "C": 228.00,   223.47
     "ci80": [219.60, 229.40]
   },
   "reasoning": "Truist’s fresh target hike to $250 and repeat Buy keeps a drumbeat of analyst upgrades alive  [oai_citation:0‡etfdailynews.com](https://www.etfdailynews.com/2025/07/05/amazon-com-nasdaqamzn-trading-up-1-2-on-analyst-upgrade/) [oai_citation:1‡etfdailynews.com](https://www.etfdailynews.com/2025/07/05/amazon-com-nasdaqamzn-price-target-raised-to-250-00/) [oai_citation:2‡finance.yahoo.com](https://finance.yahoo.com/news/truist-lifts-amazon-target-250-163204258.html?utm_source=chatgpt.com). Consensus PT now hovers near $245, reinforcing upside bias  [oai_citation:3‡etfdailynews.com](https://www.etfdailynews.com/2025/07/05/amazon-com-nasdaqamzn-trading-up-1-2-on-analyst-upgrade/). Prime Day has been stretched to 96 h; Adobe, BofA and Barron’s see $21-24 B GMV (+60 % YoY)  [oai_citation:4‡investing.com](https://www.investing.com/news/stock-market-news/amazon-prime-day-set-to-lift-us-online-sales-to-238-billion-adobe-estimates-4124459?utm_source=chatgpt.com) [oai_citation:5‡finance.yahoo.com](https://finance.yahoo.com/news/amazon-prime-day-change-has-this-analyst-making-a-bold-sales-prediction-151905448.html?utm_source=chatgpt.com) [oai_citation:6‡barrons.com](https://www.barrons.com/articles/amazon-prime-day-target-walmart-stocks-cacdc814?utm_source=chatgpt.com) [oai_citation:7‡benzinga.com](https://www.benzinga.com/markets/large-cap/25/07/46247962/21-billion-in-4-days-amazon-prime-day-set-to-go-beast-mode-and-its-stock-might-join-the-party?utm_source=chatgpt.com), adding a near-term catalyst. Morning headlines about Apple’s exploratory AWS rival are early-stage and only mildly negative  [oai_citation:8‡wccftech.com](https://wccftech.com/apple-once-considered-offering-aws-cloud-based-services-to-developers/) [oai_citation:9‡macobserver.com](https://www.macobserver.com/tips/how-apple-quietly-planned-to-take-on-aws/). Aggregated news impact (+0.58) combines with net bullish pattern weight +0.69 (three active bullish bottoms vs one bearish top) to lift P_up to 0.63. σ_real 4.56 ⇒ σ_est 4.56, widened 25 % to 5.71 because two bullish stories scored ≥0.6  [oai_citation:10‡etfdailynews.com](https://www.etfdailynews.com/2025/07/05/amazon-com-nasdaqamzn-trading-up-1-2-on-analyst-upgrade/) [oai_citation:11‡finance.yahoo.com](https://finance.yahoo.com/news/amazon-prime-day-change-has-this-analyst-making-a-bold-sales-prediction-151905448.html?utm_source=chatgpt.com). With no pre-market quote, O = last close 224.02; H/L set ±σ_est and tilted upward; C parked in the upper quartile of the band.",
