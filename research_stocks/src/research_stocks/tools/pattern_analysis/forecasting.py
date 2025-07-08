@@ -150,17 +150,29 @@ def refine_next_predictions(
   vol_lo = close - hi_lo_multiplier_dn * atr
 
   # ── 2.  Pattern-derived bias & confidence ───────────────────────────
+  latest_ts = pd.to_datetime(df.iloc[-1]["Date"])
   recency_cutoff = pd.Timestamp(df.iloc[-10]["Date"])
   pats = [
     p for p in results["patterns"]
     if pd.Timestamp(p["end_date"]) >= recency_cutoff
   ]
 
-  # Weighted counts (use |value| as crude strength; default 1)
-  bull_score = sum((p.get("value", 1) or 1) for p in pats
-                   if p["direction"] == "bullish")
-  bear_score = sum((p.get("value", 1) or 1) for p in pats
-                   if p["direction"] == "bearish")
+  def _decay_weight(p):
+    tf = str(p.get("timeframe", "daily")).lower()
+    if tf.startswith("15"):
+      half_life = 1.0  # hours
+    elif "hour" in tf or tf.startswith("1h"):
+      half_life = 4.0
+    else:
+      half_life = 24.0
+    age = (latest_ts - pd.to_datetime(p["end_date"])).total_seconds() / 3600
+    age = max(age, 0.0)
+    return math.exp(-age / half_life)
+
+  bull_score = sum(_decay_weight(p) * (p.get("value", 1) or 1)
+                   for p in pats if p["direction"] == "bullish")
+  bear_score = sum(_decay_weight(p) * (p.get("value", 1) or 1)
+                   for p in pats if p["direction"] == "bearish")
 
   if bull_score > bear_score:
     pat_dir = "bullish"

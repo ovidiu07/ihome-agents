@@ -40,9 +40,19 @@ def export_analysis_results(results: Dict[str, Any],
   # Create a copy of results to avoid modifying the original
   export_results = {}
 
+  def _label(p_list: Any) -> None:
+    if not isinstance(p_list, list):
+      return
+    for p in p_list:
+      tf = p.get("timeframe")
+      name = p.get("pattern")
+      if tf and name:
+        p["pattern"] = f"{tf}: {name}"
+
   # Convert each item in results
   for key, value in results.items():
     if isinstance(value, list):
+      _label(value)
       export_results[key] = [{k: convert(v) for k, v in item.items()} for item
         in value] if value else []
     elif isinstance(value, dict):
@@ -87,6 +97,19 @@ def export_enhanced_results(results: Dict[str, Any], output_dir: str = "output/m
     return obj
 
   serializable = json.loads(json.dumps(results, default=convert))
+
+  def _label_patterns(p_list: Any) -> None:
+    if not isinstance(p_list, list):
+      return
+    for p in p_list:
+      tf = p.get("timeframe")
+      name = p.get("pattern")
+      if tf and name:
+        p["pattern"] = f"{tf}: {name}"
+
+  for key in ["patterns", "hourly_patterns", "minutes_patterns"]:
+    if key in serializable:
+      _label_patterns(serializable[key])
 
   filename = os.path.join(date_dir, f"{symbol}_Json_{today.split('-')[0]}{today.split('-')[1]}.json")
   with open(filename, 'w') as f:

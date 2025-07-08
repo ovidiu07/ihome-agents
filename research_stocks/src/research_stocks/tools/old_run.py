@@ -202,7 +202,8 @@ def main() -> None:
     print("\n🔍 Running pattern analysis on earliest data for today…")
 
     # ── 1‑minute pattern scan (20‑bar window, strict filters) ──
-    raw_intraday = analyze_patterns(df_today_min, window=20)["patterns"]
+    raw_intraday = analyze_patterns("", df_today_min, df_today_min,
+                                     window=20, timeframe="1m")["patterns"]
 
     intraday_filtered = [p for p in raw_intraday if
                          p.get("value", 0) >= 1.2 and p.get(
@@ -222,7 +223,8 @@ def main() -> None:
     df_combined = pd.concat([df_hist.tail(180), df_today], ignore_index=True)
 
   # ── Full pattern analysis on daily candles ──
-  results = analyze_patterns(df_combined, window=5)
+  results = analyze_patterns("", df_combined, df_combined, window=5,
+                             timeframe="daily")
 
   # 1️⃣ remove exact structural duplicates
   daily_patterns = drop_duplicates(results["patterns"])
