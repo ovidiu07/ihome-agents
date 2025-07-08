@@ -240,7 +240,7 @@ def get_confirmed_patterns(symbol: str) -> List[dict]:
   last30 = df.tail(30)
   from research_stocks.tools.pattern_analysis.pattern_analyzer import \
     analyze_patterns  # type: ignore
-  results = analyze_patterns(symbol, last30, last30, window=5)
+  results = analyze_patterns(symbol, last30, last30, window=5, timeframe="daily")
   patterns = []
   cutoff = last30["Date"].iloc[-3]
   for p in results.get("patterns", []):

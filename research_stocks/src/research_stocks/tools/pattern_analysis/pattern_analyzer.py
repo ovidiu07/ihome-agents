@@ -146,8 +146,9 @@ def resolve_conflicts(patterns: List[Dict]) -> List[Dict]:
   return [p for i, p in enumerate(sorted_patterns) if keep[i]]
 
 
-def analyze_patterns(symbol: str, df: pd.DataFrame, df_summary: pd.DataFrame, window: int = 5,
-    volume_col: str = None) -> Dict[str, Any]:
+def analyze_patterns(symbol: str, df: pd.DataFrame, df_summary: pd.DataFrame,
+    window: int = 5, volume_col: str | None = None,
+    timeframe: str = "daily") -> Dict[str, Any]:
   """
   Analyze price data for various patterns.
 
@@ -155,6 +156,8 @@ def analyze_patterns(symbol: str, df: pd.DataFrame, df_summary: pd.DataFrame, wi
       df: DataFrame with OHLC data
       window: Window size for pattern detection
       volume_col: Name of volume column if available
+      timeframe: Label for the timeframe of ``df`` (e.g. "daily", "hourly",
+                 "15m").
 
   Returns:
       Dictionary with analysis results
@@ -182,12 +185,15 @@ def analyze_patterns(symbol: str, df: pd.DataFrame, df_summary: pd.DataFrame, wi
                             'Bearish Harami']:
           direction = 'bearish'
 
-        pattern = {'pattern': pattern_name,
-          'start_date': df.iloc[max(0, i - 2)]['Date'],
-          # Start a few bars before
-          'end_date': df.iloc[i]['Date'], 'direction': direction, 'value': 1.0,
-          # Default value, will be refined
-          'status': 'Confirmed'}
+        pattern = {
+          'pattern': pattern_name,
+          'start_date': df.iloc[max(0, i - 2)]['Date'],  # Start a few bars before
+          'end_date': df.iloc[i]['Date'],
+          'direction': direction,
+          'value': 1.0,  # Default value, will be refined
+          'status': 'Confirmed',
+          'timeframe': timeframe,
+        }
 
         # Calculate pattern height
         if i > 0:
@@ -208,6 +214,7 @@ def analyze_patterns(symbol: str, df: pd.DataFrame, df_summary: pd.DataFrame, wi
   # Calculate scores for chart patterns
   for pattern in chart_patterns:
     pattern['value'] = calculate_pattern_score(pattern, df, volume_col)
+    pattern['timeframe'] = timeframe
 
   # Add chart patterns to results
   results['patterns'].extend(chart_patterns)

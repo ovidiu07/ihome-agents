@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+from datetime import datetime
 
 import pandas as pd
 
@@ -81,7 +82,8 @@ def main(symbol: str = "NVDA") -> None:
   # ── Daily analysis ───────────────────────────────────────────────────
   df_combined = df_daily_hist.tail(180)
   df_summary = df_combined.tail(30)
-  results = analyze_patterns(symbol, df_combined, df_summary, window=5)
+  results = analyze_patterns(symbol, df_combined, df_summary,
+                             window=5, timeframe="daily")
   daily_patterns = cluster_and_keep_best(
       remove_duplicates_by_status(drop_duplicates(results["patterns"]),
           status_to_remove="Duplicate"), overlap=0.7)
@@ -89,7 +91,9 @@ def main(symbol: str = "NVDA") -> None:
   results = refine_next_predictions(results, df_combined)
   export_analysis_results(results)
   # ── Hourly analysis ──────────────────────────────────────────────────
-  hourly_results = analyze_patterns(symbol, df_hourly_hist, df_hourly_hist.tail(48), window=12)
+  hourly_results = analyze_patterns(symbol, df_hourly_hist,
+                                    df_hourly_hist.tail(48), window=12,
+                                    timeframe="hourly")
   hourly_patterns = cluster_and_keep_best(
       remove_duplicates_by_status(drop_duplicates(hourly_results["patterns"]),
           status_to_remove="Duplicate"), overlap=0.7)
@@ -99,11 +103,21 @@ def main(symbol: str = "NVDA") -> None:
 
   # ── 15-minute analysis ───────────────────────────────────────────────
   if not df_minutes.empty:
-    minutes_results = analyze_patterns(symbol, df_minutes, df_minutes.tail(48), window=16)
+    minutes_results = analyze_patterns(symbol, df_minutes,
+                                       df_minutes.tail(48), window=16,
+                                       timeframe="15m")
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    start_day = pd.to_datetime(f"{today_str} 09:30")
+    cutoff = start_day + pd.Timedelta(hours=3)
+    df_today = df_minutes[df_minutes["Date"].str.startswith(today_str)]
+    df_first3h = df_today[pd.to_datetime(df_today["Date"]) <= cutoff]
     minutes_patterns = cluster_and_keep_best(
         remove_duplicates_by_status(drop_duplicates(minutes_results["patterns"]),
             status_to_remove="Duplicate"), overlap=0.7)
-    minutes_results["patterns"] = minutes_patterns
+    minutes_results["patterns"] = [
+        p for p in minutes_patterns
+        if start_day <= pd.to_datetime(p["end_date"]) <= cutoff
+    ]
     minutes_results = refine_next_predictions(minutes_results, df_minutes,
                                               weight_pattern=0.6, weight_volatility=0.4)
   else:
@@ -126,7 +140,7 @@ def main(symbol: str = "NVDA") -> None:
 
   if not df_minutes.empty:
     minute_fcast = probabilistic_timeframe_forecast(
-        ohlc_df=df_minutes,
+        ohlc_df=df_first3h if not df_first3h.empty else df_minutes,
         active_patterns=minutes_results["patterns"],
         num_mc_paths=mc_paths,
         beta_k=0.6,
