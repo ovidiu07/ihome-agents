@@ -17,6 +17,8 @@ def _rolling_slope(series: pd.Series, window: int = 3) -> pd.Series:
 
 def _volume_confirm(df: pd.DataFrame, mult: float = 1.2) -> pd.Series:
   """True when today’s volume beats `mult` × 20-day average."""
+  if "Volume" not in df.columns:
+    return pd.Series(True, index=df.index)
   return df["Volume"] >= mult * df["Volume"].rolling(20).mean()
 
 
@@ -25,7 +27,7 @@ def _prep(df: pd.DataFrame) -> pd.DataFrame:
     return df.copy()
 
 
-def cs_hammer(df: pd.DataFrame,  confirm: bool = True) -> pd.Series:
+def cs_hammer(df: pd.DataFrame,  confirm: bool = False) -> pd.Series:
     """
     Detect hammer candlestick pattern.
     
@@ -55,7 +57,8 @@ def cs_hammer(df: pd.DataFrame,  confirm: bool = True) -> pd.Series:
         (body_length / candle_range <= 0.4)
     )
     # ── NEW trend & volume filters ────────────────────────────────────
-    downtrend = _rolling_slope(df['Close'], 3) < 0
+    slope_series = _rolling_slope(df['Close'], 3)
+    downtrend = (slope_series < 0) | slope_series.isna()
     vol_ok = _volume_confirm(df)
 
     mask = is_hammer & downtrend & vol_ok
@@ -63,12 +66,12 @@ def cs_hammer(df: pd.DataFrame,  confirm: bool = True) -> pd.Series:
     if confirm:
         # next day closes above hammer high
         next_close_up = df['Close'].shift(-1) > df['High']
-        mask &= next_close_up
+        mask &= next_close_up.fillna(True)
 
     return mask
 
 
-def cs_inverted_hammer(df: pd.DataFrame,  confirm: bool = True) -> pd.Series:
+def cs_inverted_hammer(df: pd.DataFrame,  confirm: bool = False) -> pd.Series:
     """
     Detect inverted hammer candlestick pattern.
     
@@ -90,13 +93,14 @@ def cs_inverted_hammer(df: pd.DataFrame,  confirm: bool = True) -> pd.Series:
         (body_length > 0) &
         (body_length / candle_range <= 0.4)
     )
-    downtrend = _rolling_slope(df['Close'], 3) < 0
+    slope_series = _rolling_slope(df['Close'], 3)
+    downtrend = (slope_series < 0) | slope_series.isna()
     vol_ok = _volume_confirm(df)
 
     mask = is_inverted_hammer & downtrend & vol_ok
 
     if confirm:
-        mask &= df['Close'].shift(-1) > df['Close']
+        mask &= (df['Close'].shift(-1) > df['Close']).fillna(True)
 
     return is_inverted_hammer
 
@@ -157,7 +161,7 @@ def cs_hanging_man(df: pd.DataFrame) -> pd.Series:
     return is_hanging_man
 
 
-def cs_doji(df: pd.DataFrame, confirm: bool = True) -> pd.Series:
+def cs_doji(df: pd.DataFrame, confirm: bool = False) -> pd.Series:
     """
     Detect doji candlestick pattern.
     
@@ -182,7 +186,7 @@ def cs_doji(df: pd.DataFrame, confirm: bool = True) -> pd.Series:
     if confirm:
         # require a >-1% move the next day in either direction
         next_ret = df['Close'].shift(-1) / df['Close'] - 1
-        mask &= next_ret.abs() >= 0.01
+        mask &= next_ret.fillna(0).abs() >= 0.01
 
     return mask
 
@@ -333,6 +337,81 @@ def cs_bearish_harami(df: pd.DataFrame) -> pd.Series:
     return cond.fillna(False)
 
 
+def cs_engulfing(df: pd.DataFrame) -> pd.DataFrame:
+    """Detect bullish and bearish engulfing patterns."""
+    df = _prep(df)
+
+    curr_body_top = df[['Open', 'Close']].max(axis=1)
+    curr_body_bot = df[['Open', 'Close']].min(axis=1)
+    prev_body_top = df[['Open', 'Close']].shift(1).max(axis=1)
+    prev_body_bot = df[['Open', 'Close']].shift(1).min(axis=1)
+
+    is_bullish_engulfing = (
+        (df['Close'] > df['Open']) &
+        (df['Open'].shift(1) > df['Close'].shift(1)) &
+        (curr_body_bot < prev_body_bot) &
+        (curr_body_top > prev_body_top)
+    )
+
+    is_bearish_engulfing = (
+        (df['Close'] < df['Open']) &
+        (df['Open'].shift(1) < df['Close'].shift(1)) &
+        (curr_body_bot < prev_body_bot) &
+        (curr_body_top > prev_body_top)
+    )
+
+    return pd.DataFrame({
+        'Bullish Engulfing': is_bullish_engulfing,
+        'Bearish Engulfing': is_bearish_engulfing,
+    })
+
+
+def cs_kicker(df: pd.DataFrame) -> pd.DataFrame:
+    """Detect bullish and bearish kicker patterns."""
+    df = _prep(df)
+
+    is_bullish_kicker = (
+        (df['Close'].shift(1) < df['Open'].shift(1)) &
+        (df['Close'] > df['Open']) &
+        (df['Open'] > df['Close'].shift(1))
+    )
+
+    is_bearish_kicker = (
+        (df['Close'].shift(1) > df['Open'].shift(1)) &
+        (df['Close'] < df['Open']) &
+        (df['Open'] < df['Close'].shift(1))
+    )
+
+    return pd.DataFrame({
+        'Bullish Kicker': is_bullish_kicker,
+        'Bearish Kicker': is_bearish_kicker,
+    })
+
+
+def cs_inside_bar(df: pd.DataFrame) -> pd.DataFrame:
+    """Detect inside bar patterns."""
+    df = _prep(df)
+
+    is_inside_bar = (
+        (df['High'] < df['High'].shift(1)) &
+        (df['Low'] > df['Low'].shift(1))
+    )
+
+    return pd.DataFrame({'Inside Bar': is_inside_bar})
+
+
+def cs_outside_bar(df: pd.DataFrame) -> pd.DataFrame:
+    """Detect outside bar patterns."""
+    df = _prep(df)
+
+    is_outside_bar = (
+        (df['High'] > df['High'].shift(1)) &
+        (df['Low'] < df['Low'].shift(1))
+    )
+
+    return pd.DataFrame({'Outside Bar': is_outside_bar})
+
+
 def detect_candlestick_patterns(df: pd.DataFrame) -> pd.DataFrame:
     """
     Detect various candlestick patterns in the given dataframe.
@@ -359,5 +438,19 @@ def detect_candlestick_patterns(df: pd.DataFrame) -> pd.DataFrame:
     patterns['Evening Star'] = cs_evening_star(df)
     patterns['Bullish Harami'] = cs_bullish_harami(df)
     patterns['Bearish Harami'] = cs_bearish_harami(df)
-    
+
+    engulfing_patterns = cs_engulfing(df)
+    patterns['Bullish Engulfing'] = engulfing_patterns['Bullish Engulfing']
+    patterns['Bearish Engulfing'] = engulfing_patterns['Bearish Engulfing']
+
+    kicker_patterns = cs_kicker(df)
+    patterns['Bullish Kicker'] = kicker_patterns['Bullish Kicker']
+    patterns['Bearish Kicker'] = kicker_patterns['Bearish Kicker']
+
+    inside_bar = cs_inside_bar(df)
+    patterns['Inside Bar'] = inside_bar['Inside Bar']
+
+    outside_bar = cs_outside_bar(df)
+    patterns['Outside Bar'] = outside_bar['Outside Bar']
+
     return patterns

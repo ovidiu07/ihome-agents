@@ -512,6 +512,69 @@ def probabilistic_day_forecast(ohlc_df: pd.DataFrame,
           "patterns": active_patterns["name"].tolist() if not active_patterns.empty else [], }
 
 
+def probabilistic_timeframe_forecast(ohlc_df: pd.DataFrame,
+    active_patterns: List[Dict[str, Any]], num_mc_paths: int = 1000,
+    atr_period: int = 14, beta_k: float = 1.0,) -> Dict[str, Any]:
+  """Generate a probabilistic forecast for the next period in any timeframe."""
+  ohlc_df = _normalize_ohlc(ohlc_df)
+  active_patterns = _normalize_pattern_df(active_patterns)
+
+  stats = _load_pattern_stats()
+  last_close = ohlc_df["close"].iloc[-1]
+
+  if active_patterns.empty:
+    prob_up = 0.5
+  else:
+    log_odds_sum = 0.0
+    dampening_factor = 0.7
+    pattern_count = len(active_patterns)
+    for _, p in active_patterns.iterrows():
+      key = (p["name"], p["direction"])
+      p_prob = stats["p"].get(key, 0.55)
+      p_prob = max(0.01, min(0.99, p_prob))
+      sign = +1 if p["direction"] == "bullish" else -1
+      log_odds_sum += math.log(p_prob / (1 - p_prob)) * sign * dampening_factor / max(1, math.sqrt(pattern_count))
+    prob_up = 1 / (1 + math.exp(-log_odds_sum))
+
+  confidence = min(0.9, abs(prob_up - 0.5) * 2.0)
+  bias = "bullish" if prob_up > 0.55 else "bearish" if prob_up < 0.45 else "neutral"
+
+  tr = np.maximum(ohlc_df["high"] - ohlc_df["low"],
+                  np.maximum((ohlc_df["high"] - ohlc_df["close"].shift()).abs(),
+                             (ohlc_df["low"] - ohlc_df["close"].shift()).abs(),),)
+  atr = tr.rolling(atr_period, min_periods=1).mean().iloc[-1]
+  atr_pct = atr / last_close if last_close > 0 else 0.0
+
+  mu = (prob_up - 0.5) * 2.0 * beta_k * atr_pct
+
+  returns = np.log(ohlc_df["close"]).diff().dropna()
+  if returns.empty or returns.std(ddof=0) == 0.0:
+    returns = pd.Series(np.random.normal(0, 1e-4, size=50))
+
+  sampled_cc = np.random.choice(returns, size=num_mc_paths, replace=True)
+  sampled_cc = np.exp(sampled_cc + mu) - 1.0
+
+  close_samples = last_close * (1.0 + sampled_cc)
+  high_samples = np.maximum(last_close, close_samples) + np.random.uniform(0.1, 0.5, num_mc_paths) * atr
+  low_samples = np.minimum(last_close, close_samples) - np.random.uniform(0.1, 0.5, num_mc_paths) * atr
+
+  open_ = last_close
+  close_ = float(np.median(close_samples))
+  high_ = float(np.quantile(high_samples, 0.75))
+  low_ = float(np.quantile(low_samples, 0.25))
+  p10, p90 = np.quantile(close_samples, [0.10, 0.90])
+
+  return {
+      "bias": bias,
+      "prob_up": round(float(prob_up), 4),
+      "confidence": round(float(confidence), 4),
+      "expected_return": round(float(mu), 4),
+      "ohlc": {"o": open_, "h": high_, "l": low_, "c": close_},
+      "interval_80": (round(float(p10), 4), round(float(p90), 4)),
+      "patterns": active_patterns["name"].tolist() if not active_patterns.empty else [],
+  }
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Internal helpers
 # ──────────────────────────────────────────────────────────────────────────────
