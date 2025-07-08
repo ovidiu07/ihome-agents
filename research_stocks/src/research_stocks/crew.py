@@ -452,7 +452,7 @@ class StockAnalysisCrew:
     3) Ask GPT-4 to enhance the forecast
     """
     print(f"Starting Market Briefing Crew for symbol: {self._symbol}...")
-    harvest_data_offline(self._symbol, days_back=3)
+    harvest_data_offline(self._symbol, days_back=1)
 
     self.merge_news_into_results()
 

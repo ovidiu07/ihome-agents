@@ -54,7 +54,7 @@ def main(symbol: str = "NVDA") -> None:
     return
 
   symbol = symbol.upper()
-  lookback = "3mo"  # daily history to pull
+  lookback = "1mo"  # daily history to pull
   mc_paths = 2_000  # Monte-Carlo paths for probabilistic forecast
 
   # ─── Fetch historical data ────────────────────────────────────────────
@@ -71,10 +71,10 @@ def main(symbol: str = "NVDA") -> None:
   else:
     print("\n🔍 Scanning intraday patterns …")
     df_today = pd.DataFrame([generate_evolving_daily_ohlc(df_today_min)])
-    df_combined = pd.concat([df_hist.tail(180), df_today], ignore_index=True)
+    df_combined = pd.concat([df_hist, df_today], ignore_index=True)
     df_summary = df_combined.tail(30)
     raw_intraday = \
-    analyze_patterns(symbol, df_today_min, df_summary, window=20)["patterns"]
+    analyze_patterns(symbol, df_today_min, df_summary, window=7)["patterns"]
 
     intraday_filtered = suppress_nearby_hits(
         filter_patterns_by_criteria(raw_intraday, min_value=1.2,

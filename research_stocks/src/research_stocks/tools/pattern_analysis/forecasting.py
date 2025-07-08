@@ -100,123 +100,101 @@ def _label_patterns(df: pd.DataFrame, patterns: List[Dict]) -> pd.DataFrame:
   return labeled_df
 
 
+def _decay(t_delta_h: float, half_life_h: float) -> float:
+  """Exponential decay factor."""
+  return math.exp(-t_delta_h / half_life_h)
+
+
 def refine_next_predictions(
     results: Dict[str, Any],
     df: pd.DataFrame,
-    days: int = 1,
+    *,
     weight_pattern: float = 0.4,
     weight_volatility: float = 0.6,
     atr_window: int = 14,
-    hi_lo_multiplier_up: float = 1.6,
-    hi_lo_multiplier_dn: float = 1.4,
+    half_life_h: float = 8.0,          # pattern relevance half-life (hrs)
+    hi_lo_q_hi: float = 0.75,
+    hi_lo_q_lo: float = 0.25,
 ) -> Dict[str, Any]:
   """
-  Blend pattern bias with volatility statistics to produce a next-period
-  OHLC forecast.
+  Pattern-aware one-bar OHLC forecast.
 
-  Parameters
-  ----------
-  weight_pattern / weight_volatility
-      Must sum to 1.  The first biases the *direction*, the second the
-      *magnitude* (ATR-based envelope).
-  atr_window
-      Rolling window for the ATR.
-  hi_lo_multiplier_up / hi_lo_multiplier_dn
-      How many ATRs above / below to place the initial volatility band.
-      (Allows asymmetric tails.)
+  • Direction   → reliability-weighted, time-decayed pattern log-odds
+  • Magnitude   → empirical ATR & Hi-Lo distribution
+  • Gap / open  → empirical open-gap distribution (fat-tailed)
   """
   if abs(weight_pattern + weight_volatility - 1.0) > 1e-6:
     raise ValueError("weights must sum to 1")
 
   out = results.copy()
-  if not results.get("patterns") or len(df) < atr_window + 1:
-    return out  # not enough info – leave as is
+  if not results.get("patterns") or len(df) < atr_window + 5:
+    return out  # not enough data
 
   latest = df.iloc[-1]
   close = latest["Close"]
+  now_ts = pd.to_datetime(latest["Date"])
 
-  # ── 1.  Volatility baseline ─────────────────────────────────────────
-  tr = pd.concat(
-      [
-        df["High"] - df["Low"],
-        (df["High"] - df["Close"].shift()).abs(),
-        (df["Low"] - df["Close"].shift()).abs(),
-        ],
-      axis=1,
-  ).max(axis=1)
-  atr = tr.rolling(atr_window, min_periods=atr_window).mean().iloc[-1]
+  # ── 1.  EW-ATR & empirical Hi-Lo band ─────────────────────────────
+  tr = np.maximum(
+      df["High"] - df["Low"],
+      np.maximum((df["High"] - df["Close"].shift()).abs(),
+                 (df["Low"] - df["Close"].shift()).abs()),
+      )
+  atr = tr.ewm(alpha=1 / atr_window, adjust=False).mean().iloc[-1]
 
-  vol_hi = close + hi_lo_multiplier_up * atr
-  vol_lo = close - hi_lo_multiplier_dn * atr
+  # empirical hi-lo multipliers (ratios vs ATR)
+  hl_ratio = (df["High"] - df["Low"]) / atr
+  hl_hi = np.nanquantile(hl_ratio, hi_lo_q_hi)
+  hl_lo = np.nanquantile(hl_ratio, hi_lo_q_lo)
 
-  # ── 2.  Pattern-derived bias & confidence ───────────────────────────
-  recency_cutoff = pd.Timestamp(df.iloc[-10]["Date"])
-  pats = [
-    p for p in results["patterns"]
-    if pd.Timestamp(p["end_date"]) >= recency_cutoff
-  ]
+  # ── 2.  Pattern-derived probability (log-odds blend) ──────────────
+  reliab_map = get_pattern_reliability()
+  log_odds = 0.0
+  for p in results["patterns"]:
+    end_ts = pd.to_datetime(p["end_date"])
+    age_h = max((now_ts - end_ts).total_seconds() / 3600, 0.0)
+    decay = _decay(age_h, half_life_h)
 
-  # Weighted counts (use |value| as crude strength; default 1)
-  bull_score = sum((p.get("value", 1) or 1) for p in pats
-                   if p["direction"] == "bullish")
-  bear_score = sum((p.get("value", 1) or 1) for p in pats
-                   if p["direction"] == "bearish")
+    base_p = reliab_map.get(p["pattern"], 0.55)
+    base_p = max(0.01, min(0.99, base_p))  # clamp
+    strength = (p.get("value", 50) / 100)  # scale 0-1
 
-  if bull_score > bear_score:
-    pat_dir = "bullish"
-    pat_conf = min(0.2 + 0.15 * math.log1p(bull_score - bear_score), 0.9)
-  elif bear_score > bull_score:
-    pat_dir = "bearish"
-    pat_conf = min(0.2 + 0.15 * math.log1p(bear_score - bull_score), 0.9)
-  else:
-    pat_dir = "neutral"
-    pat_conf = 0.0
+    contrib = math.log(base_p / (1 - base_p)) * strength * decay
+    log_odds += contrib if p["direction"] == "bullish" else -contrib
 
-  # ── 3.  Blend direction  ────────────────────────────────────────────
-  final_bias_score = (weight_pattern * (1 if pat_dir == "bullish"
-                                        else -1 if pat_dir == "bearish"
-  else 0)
-                      )
-  # could blend in other factors later
+  prob_up = 1 / (1 + math.exp(-log_odds))
+  direction = "bullish" if prob_up > 0.55 else "bearish" if prob_up < 0.45 else "neutral"
+  conf = round(abs(prob_up - 0.5) * 2, 2)  # 0 … 1
 
-  if final_bias_score > 0.05:
-    direction = "bullish"
-  elif final_bias_score < -0.05:
-    direction = "bearish"
-  else:
-    direction = "neutral"
-
-  # ── 4.  Price targets  ──────────────────────────────────────────────
+  # ── 3.  Price targets ─────────────────────────────────────────────
   if direction == "bullish":
-    high = vol_hi
-    low = close - 0.6 * atr        # shallow pullback
-    close_next = close + 0.7 * (high - close) * weight_pattern
+    high = close + hl_hi * atr * weight_volatility
+    low = close - hl_lo * atr * 0.5             # shallow pullback
+    close_next = close + (high - close) * weight_pattern * 0.7
   elif direction == "bearish":
-    high = close + 0.4 * atr       # limited upside
-    low = vol_lo
-    close_next = close - 0.7 * (close - low) * weight_pattern
+    low = close - hl_hi * atr * weight_volatility
+    high = close + hl_lo * atr * 0.4            # limited upside
+    close_next = close - (close - low) * weight_pattern * 0.7
   else:
-    high, low = vol_hi, vol_lo
+    high = close + hl_hi * atr * 0.5
+    low = close - hl_lo * atr * 0.5
     close_next = close
 
-  # Gap/open modelling — use historical open-to-prior-close gap
-  gap_pct = ((df["Open"] / df["Close"].shift()) - 1).dropna()
-  oc_gap_pct = gap_pct.std(ddof=0)
-
-  # Guard-rails: 0.1 % … 5 % typical for liquid large-caps
-  oc_gap_pct = float(np.clip(oc_gap_pct, 0.001, 0.05))
-  open_next = close * (1 + np.random.normal(0, oc_gap_pct))
+  # ── 4.  Gap / open modelling ─────────────────────────────────────
+  gaps = ((df["Open"] / df["Close"].shift()) - 1).dropna()
+  gap_pct = np.random.choice(gaps.values) if not gaps.empty else np.random.normal(0, 0.002)
+  open_next = close * (1 + gap_pct)
 
   out["next_prediction"] = {
     "direction": direction,
-    "confidence": round(max(pat_conf, 0.25), 2),
+    "confidence": conf,
+    "prob_up": round(prob_up, 3),
     "O": round(float(open_next), 2),
     "H": round(float(high), 2),
     "L": round(float(low), 2),
     "C": round(float(close_next), 2),
   }
   return out
-
 
 class _OHLCForecaster:
   """
