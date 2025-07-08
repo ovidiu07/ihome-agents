@@ -82,8 +82,9 @@ def fetch_hourly_data(symbol: str, days: int = 20) -> pd.DataFrame:
       end=end_date.strftime("%Y-%m-%d"),
       interval="1h")
 
-  df_hourly = df_hourly.reset_index()
-  df_hourly["Date"] = df_hourly["Date"].dt.strftime("%Y-%m-%d %H:%M")
+  # yfinance uses "Datetime" for intraday intervals
+  df_hourly = df_hourly.reset_index().rename(columns={"Datetime": "Date", "index": "Date"})
+  df_hourly["Date"] = pd.to_datetime(df_hourly["Date"]).dt.strftime("%Y-%m-%d %H:%M")
   return df_hourly
 
 
@@ -103,8 +104,8 @@ def fetch_minutes_data(symbol: str, interval: int = 15, days: int = 10) -> pd.Da
       end=end_date.strftime("%Y-%m-%d"),
       interval=yf_interval)
 
-  df_minutes = df_minutes.reset_index()
-  df_minutes["Date"] = df_minutes["Date"].dt.strftime("%Y-%m-%d %H:%M")
+  df_minutes = df_minutes.reset_index().rename(columns={"Datetime": "Date", "index": "Date"})
+  df_minutes["Date"] = pd.to_datetime(df_minutes["Date"]).dt.strftime("%Y-%m-%d %H:%M")
   df_minutes = df_minutes[df_minutes["Date"].str.split(" ").str[1].between("09:30", "16:00")]
   return df_minutes
 
