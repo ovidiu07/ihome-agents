@@ -182,7 +182,7 @@ def get_appropriate_llm(task_complexity: str) -> LLM:
 #     api_key=AGENTOPS_API_KEY,
 #     default_tags=['crewai']
 # )
-def harvest_data_offline(symbols: list[str], days_back: int = 3) -> list[dict]:
+def harvest_data_offline(symbols: list[str], days_back: int = 1) -> list[dict]:
   """
   Hit NewsAPI in chunks so each query string stays < 500 chars.
   Collapses the responses into one de-duplicated list and saves
@@ -452,7 +452,7 @@ class StockAnalysisCrew:
     3) Ask GPT-4 to enhance the forecast
     """
     print(f"Starting Market Briefing Crew for symbol: {self._symbol}...")
-    harvest_data_offline(self._symbol, days_back=3)
+    harvest_data_offline(self._symbol, days_back=1)
 
     self.merge_news_into_results()
 

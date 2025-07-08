@@ -64,18 +64,18 @@ def main(symbol: str = "NVDA") -> None:
     return
 
   symbol = symbol.upper()
-  lookback_daily = "3mo"
-  lookback_hourly = 20
-  lookback_minutes = 10
+  lookback_daily = "1mo"
+  lookback_hourly = 2
+  lookback_minutes = 1
   mc_paths = 2_000
 
   df_daily_hist = fetch_daily_history(symbol, period=lookback_daily)
   df_hourly_hist = fetch_hourly_data(symbol, days=lookback_hourly)
 
-  df_minutes = fetch_polygon_intraday(symbol, poly_key, interval=15, days=lookback_minutes)
+  df_minutes = fetch_polygon_intraday(symbol, poly_key, interval=5, days=lookback_minutes)
   if df_minutes.empty:
-    print("⚠️ Falling back to yfinance for 15-minute data")
-    df_minutes = fetch_minutes_data(symbol, interval=15, days=lookback_minutes)
+    print("⚠️ Falling back to yfinance for 5-minute data")
+    df_minutes = fetch_minutes_data(symbol, interval=5, days=lookback_minutes)
 
   df_today_min = fetch_intraday_bars(symbol, poly_key, limit=150)
 
