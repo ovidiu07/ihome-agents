@@ -98,7 +98,7 @@ def cs_inverted_hammer(df: pd.DataFrame,  confirm: bool = True) -> pd.Series:
     if confirm:
         mask &= df['Close'].shift(-1) > df['Close']
 
-    return is_inverted_hammer
+    return mask
 
 
 def cs_shooting_star(df: pd.DataFrame) -> pd.Series:

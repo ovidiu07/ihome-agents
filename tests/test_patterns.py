@@ -2,10 +2,18 @@ import os
 import sys
 import pandas as pd
 import numpy as np
+import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'research_stocks', 'src'))
 from research_stocks.tools.pattern_analysis import candlestick_patterns as cp
 from research_stocks.tools.pattern_analysis import chart_patterns as chp
+
+
+@pytest.fixture(autouse=True)
+def _patch_helpers(monkeypatch):
+    """Ignore trend and volume filters for unit tests."""
+    monkeypatch.setattr(cp, "_rolling_slope", lambda s, window=3: pd.Series(-1, index=s.index))
+    monkeypatch.setattr(cp, "_volume_confirm", lambda df, mult=1.2: pd.Series(True, index=df.index))
 
 
 def df_single(open_, high, low, close):
@@ -14,15 +22,21 @@ def df_single(open_, high, low, close):
 
 def test_hammer_positive():
     df = df_single(10,10.3,9,10.2)
-    assert cp.cs_hammer(df).iloc[0]
+    assert cp.cs_hammer(df, confirm=False).iloc[0]
 
 def test_hammer_negative():
     df = df_single(10,10.8,9.7,10.5)
-    assert not cp.cs_hammer(df).iloc[0]
+    assert not cp.cs_hammer(df, confirm=False).iloc[0]
 
 def test_inverted_hammer_positive():
     df = df_single(10.1,11,10.05,10.2)
-    assert cp.cs_inverted_hammer(df).iloc[0]
+    assert cp.cs_inverted_hammer(df, confirm=False).iloc[0]
+
+
+def test_inverted_hammer_requires_downtrend(monkeypatch):
+    df = df_single(10.1,11,10.05,10.2)
+    monkeypatch.setattr(cp, "_rolling_slope", lambda s, window=3: pd.Series(1, index=s.index))
+    assert not cp.cs_inverted_hammer(df).iloc[0]
 
 def test_shooting_star_positive():
     df = df_single(10.0,11.0,9.7,9.8)
@@ -30,7 +44,7 @@ def test_shooting_star_positive():
 
 def test_doji_positive():
     df = df_single(10,10.2,9.8,10.01)
-    assert cp.cs_doji(df).iloc[0]
+    assert cp.cs_doji(df, confirm=False).iloc[0]
 
 
 def make_three_white_soldiers():
