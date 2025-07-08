@@ -4,9 +4,43 @@
 
 import json
 import os
-from typing import Dict, Any
+from datetime import datetime
+from typing import Any, Dict
 
 import pandas as pd
+from pandas.api.types import is_datetime64_any_dtype
+
+
+def _convert(obj: Any) -> Any:
+  """Convert common pandas/numpy objects for JSON serialization."""
+  if isinstance(obj, pd.Timestamp):
+    return obj.strftime('%Y-%m-%d')
+  elif isinstance(obj, pd.DataFrame):
+    df = obj.copy()
+    for col in df.columns:
+      if is_datetime64_any_dtype(df[col]):
+        df[col] = df[col].astype(str)
+    return df.to_dict(orient='records')
+  elif isinstance(obj, pd.Series):
+    ser = obj.copy()
+    if is_datetime64_any_dtype(ser):
+      ser = ser.astype(str)
+    return ser.to_dict()
+  elif isinstance(obj, (float, int)) and (pd.isna(obj) or pd.isnull(obj)):
+    return None
+  elif hasattr(obj, 'tolist'):
+    return obj.tolist()
+  else:
+    return obj
+
+
+def _convert_recursive(value: Any) -> Any:
+  """Recursively convert objects to JSON-serialisable forms."""
+  if isinstance(value, dict):
+    return {k: _convert_recursive(v) for k, v in value.items()}
+  if isinstance(value, list):
+    return [_convert_recursive(v) for v in value]
+  return _convert(value)
 
 
 def export_analysis_results(results: Dict[str, Any],
@@ -22,32 +56,7 @@ def export_analysis_results(results: Dict[str, Any],
   os.makedirs(output_dir, exist_ok=True)
 
   # Convert results to JSON-serializable format
-  def convert(obj):
-    if isinstance(obj, pd.Timestamp):
-      return obj.strftime('%Y-%m-%d')
-    elif isinstance(obj, pd.DataFrame):
-      return obj.to_dict(orient='records')
-    elif isinstance(obj, pd.Series):
-      return obj.to_dict()
-    elif isinstance(obj, (float, int)) and (pd.isna(obj) or pd.isnull(obj)):
-      return None
-    elif hasattr(obj, 'tolist'):  # For numpy arrays
-      return obj.tolist()
-    else:
-      return obj
-
-  # Create a copy of results to avoid modifying the original
-  export_results = {}
-
-  # Convert each item in results
-  for key, value in results.items():
-    if isinstance(value, list):
-      export_results[key] = [{k: convert(v) for k, v in item.items()} for item
-        in value] if value else []
-    elif isinstance(value, dict):
-      export_results[key] = {k: convert(v) for k, v in value.items()}
-    else:
-      export_results[key] = convert(value)
+  export_results = _convert_recursive(results)
 
   # Save to JSON file
   symbol = results.get('symbol', '')
@@ -139,3 +148,25 @@ def generate_evolving_daily_ohlc(intraday_df: pd.DataFrame) -> Dict[str, float]:
     ohlc['Volume'] = intraday_df['Volume'].sum()
 
   return ohlc
+
+
+def export_enhanced_results(results: Dict[str, Any],
+    output_dir: str = "output/model_enhanced") -> None:
+  """Export enhanced multi-timeframe results to JSON."""
+  os.makedirs(output_dir, exist_ok=True)
+
+  today = datetime.now().strftime("%d-%m-%Y")
+  symbol = results.get("symbol", "")
+
+  date_dir = os.path.join(output_dir, today)
+  os.makedirs(date_dir, exist_ok=True)
+
+  filename = os.path.join(date_dir,
+                          f"{symbol}_Json_{today.split('-')[0]}{today.split('-')[1]}")
+
+  export_data = _convert_recursive(results)
+
+  with open(filename, 'w') as f:
+    json.dump(export_data, f, indent=2)
+
+  print(f"📝 Enhanced results saved to {filename}")

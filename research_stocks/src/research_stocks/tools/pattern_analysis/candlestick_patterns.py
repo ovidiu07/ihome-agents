@@ -17,6 +17,8 @@ def _rolling_slope(series: pd.Series, window: int = 3) -> pd.Series:
 
 def _volume_confirm(df: pd.DataFrame, mult: float = 1.2) -> pd.Series:
   """True when today’s volume beats `mult` × 20-day average."""
+  if "Volume" not in df.columns:
+    return pd.Series([True] * len(df), index=df.index)
   return df["Volume"] >= mult * df["Volume"].rolling(20).mean()
 
 
@@ -55,13 +57,15 @@ def cs_hammer(df: pd.DataFrame,  confirm: bool = True) -> pd.Series:
         (body_length / candle_range <= 0.4)
     )
     # ── NEW trend & volume filters ────────────────────────────────────
-    downtrend = _rolling_slope(df['Close'], 3) < 0
+    if len(df) >= 3:
+        downtrend = _rolling_slope(df['Close'], 3) < 0
+    else:
+        downtrend = pd.Series(True, index=df.index)
     vol_ok = _volume_confirm(df)
 
     mask = is_hammer & downtrend & vol_ok
 
-    if confirm:
-        # next day closes above hammer high
+    if confirm and len(df) >= 2:
         next_close_up = df['Close'].shift(-1) > df['High']
         mask &= next_close_up
 
@@ -179,8 +183,7 @@ def cs_doji(df: pd.DataFrame, confirm: bool = True) -> pd.Series:
     vol_ok = _volume_confirm(df)
     mask = is_doji & vol_ok
 
-    if confirm:
-        # require a >-1% move the next day in either direction
+    if confirm and len(df) >= 2:
         next_ret = df['Close'].shift(-1) / df['Close'] - 1
         mask &= next_ret.abs() >= 0.01
 
