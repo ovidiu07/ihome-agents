@@ -105,6 +105,9 @@ def _decay(t_delta_h: float, half_life_h: float) -> float:
   return math.exp(-t_delta_h / half_life_h)
 
 
+# ---------------------------------------------------------------------------
+# Improved high/close logic — empirical excursions conditioned on bias
+# ---------------------------------------------------------------------------
 def refine_next_predictions(
     results: Dict[str, Any],
     df: pd.DataFrame,
@@ -112,82 +115,103 @@ def refine_next_predictions(
     weight_pattern: float = 0.4,
     weight_volatility: float = 0.6,
     atr_window: int = 14,
-    half_life_h: float = 8.0,          # pattern relevance half-life (hrs)
+    half_life_h: float = 8.0,
     hi_lo_q_hi: float = 0.75,
     hi_lo_q_lo: float = 0.25,
 ) -> Dict[str, Any]:
   """
-  Pattern-aware one-bar OHLC forecast.
-
-  • Direction   → reliability-weighted, time-decayed pattern log-odds
-  • Magnitude   → empirical ATR & Hi-Lo distribution
-  • Gap / open  → empirical open-gap distribution (fat-tailed)
+  One-bar OHLC forecast.
+  Open & Low logic unchanged; High and Close now derive from
+  *conditional* empirical excursions (↑ for bull bias, ↓ for bear bias).
   """
   if abs(weight_pattern + weight_volatility - 1.0) > 1e-6:
     raise ValueError("weights must sum to 1")
 
   out = results.copy()
   if not results.get("patterns") or len(df) < atr_window + 5:
-    return out  # not enough data
+    return out
 
   latest = df.iloc[-1]
   close = latest["Close"]
   now_ts = pd.to_datetime(latest["Date"])
 
-  # ── 1.  EW-ATR & empirical Hi-Lo band ─────────────────────────────
+  # ── 1. EW-ATR & series-level metrics ──────────────────────────────
   tr = np.maximum(
       df["High"] - df["Low"],
-      np.maximum((df["High"] - df["Close"].shift()).abs(),
-                 (df["Low"] - df["Close"].shift()).abs()),
+      np.maximum(
+          (df["High"] - df["Close"].shift()).abs(),
+          (df["Low"] - df["Close"].shift()).abs(),
+      ),
       )
-  atr = tr.ewm(alpha=1 / atr_window, adjust=False).mean().iloc[-1]
+  atr_series = tr.ewm(alpha=1 / atr_window, adjust=False).mean()
+  atr = atr_series.iloc[-1]
 
-  # empirical hi-lo multipliers (ratios vs ATR)
-  hl_ratio = (df["High"] - df["Low"]) / atr
-  hl_hi = np.nanquantile(hl_ratio, hi_lo_q_hi)
-  hl_lo = np.nanquantile(hl_ratio, hi_lo_q_lo)
+  # intraday excursion ratios
+  up_ex = (df["High"] - df[["Open", "Close"]].max(axis=1)) / atr_series
+  dn_ex = (df[["Open", "Close"]].min(axis=1) - df["Low"]) / atr_series
+  up_move = (df["Close"] - df["Open"]) / atr_series          # + on up-days
+  dn_move = (df["Open"] - df["Close"]) / atr_series          # + on down-days
 
-  # ── 2.  Pattern-derived probability (log-odds blend) ──────────────
+  pos_mask = up_move >= 0
+  neg_mask = dn_move >= 0
+
+  # ── 2. Pattern-derived probability (unchanged) ───────────────────
   reliab_map = get_pattern_reliability()
   log_odds = 0.0
   for p in results["patterns"]:
-    end_ts = pd.to_datetime(p["end_date"])
-    age_h = max((now_ts - end_ts).total_seconds() / 3600, 0.0)
-    decay = _decay(age_h, half_life_h)
-
-    base_p = reliab_map.get(p["pattern"], 0.55)
-    base_p = max(0.01, min(0.99, base_p))  # clamp
-    strength = (p.get("value", 50) / 100)  # scale 0-1
-
+    age_h = max((now_ts - pd.to_datetime(p["end_date"])).total_seconds() / 3600, 0.0)
+    decay = math.exp(-age_h / half_life_h)
+    base_p = max(0.01, min(0.99, reliab_map.get(p["pattern"], 0.55)))
+    strength = (p.get("value", 50) / 100)
     contrib = math.log(base_p / (1 - base_p)) * strength * decay
     log_odds += contrib if p["direction"] == "bullish" else -contrib
 
   prob_up = 1 / (1 + math.exp(-log_odds))
   direction = "bullish" if prob_up > 0.55 else "bearish" if prob_up < 0.45 else "neutral"
-  conf = round(abs(prob_up - 0.5) * 2, 2)  # 0 … 1
+  conf = abs(prob_up - 0.5) * 2  # 0-1
 
-  # ── 3.  Price targets ─────────────────────────────────────────────
+  # choose conditional quantiles based on confidence
+  def _q(base: float, span: float = 0.3) -> float:
+    return np.clip(base + span * conf, 0.05, 0.95)
+
+  # ── 3. Price targets (new High/Close logic) ───────────────────────
   if direction == "bullish":
-    high = close + hl_hi * atr * weight_volatility
-    low = close - hl_lo * atr * 0.5             # shallow pullback
-    close_next = close + (high - close) * weight_pattern * 0.7
+    q_hi = _q(0.55)
+    q_close = _q(0.50, 0.25)
+    hi_exc = np.nanquantile(up_ex[pos_mask], q_hi) if pos_mask.any() else hi_lo_q_hi
+    cl_mv = np.nanquantile(up_move[pos_mask], q_close) if pos_mask.any() else 0.5
+    high = close + hi_exc * atr * weight_volatility
+    low = close - np.nanquantile(dn_ex, hi_lo_q_lo) * atr * 0.5  # unchanged low logic
+    close_next = close + cl_mv * atr * weight_pattern
+
   elif direction == "bearish":
-    low = close - hl_hi * atr * weight_volatility
-    high = close + hl_lo * atr * 0.4            # limited upside
-    close_next = close - (close - low) * weight_pattern * 0.7
-  else:
-    high = close + hl_hi * atr * 0.5
-    low = close - hl_lo * atr * 0.5
+    q_hi = 1 - _q(0.55)             # smaller upside
+    q_close = _q(0.50, 0.25)
+    hi_exc = np.nanquantile(up_ex[neg_mask], q_hi) if neg_mask.any() else hi_lo_q_lo
+    cl_mv = np.nanquantile(dn_move[neg_mask], q_close) if neg_mask.any() else 0.5
+    low = close - np.nanquantile(dn_ex[neg_mask], _q(0.55)) * atr * weight_volatility
+    high = close + hi_exc * atr * 0.4  # limited upside
+    close_next = close - cl_mv * atr * weight_pattern
+
+  else:  # sideways
+    hi_exc = np.nanquantile(up_ex, 0.5)
+    dn_exc = np.nanquantile(dn_ex, 0.5)
+    high = close + hi_exc * atr * 0.5
+    low = close - dn_exc * atr * 0.5
     close_next = close
 
-  # ── 4.  Gap / open modelling ─────────────────────────────────────
+  # ── 4. Gap / open (unchanged) ─────────────────────────────────────
   gaps = ((df["Open"] / df["Close"].shift()) - 1).dropna()
   gap_pct = np.random.choice(gaps.values) if not gaps.empty else np.random.normal(0, 0.002)
   open_next = close * (1 + gap_pct)
 
+  # ensure high ≥ close & open  ; low ≤ ...
+  high = max(high, open_next, close_next)
+  low = min(low, open_next, close_next)
+
   out["next_prediction"] = {
     "direction": direction,
-    "confidence": conf,
+    "confidence": round(conf, 2),
     "prob_up": round(prob_up, 3),
     "O": round(float(open_next), 2),
     "H": round(float(high), 2),

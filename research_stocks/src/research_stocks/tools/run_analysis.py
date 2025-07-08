@@ -132,6 +132,14 @@ def main(symbol: str = "NVDA") -> None:
         f"  (80 % interval: {day_fcast['interval_80']})")
 
   # ─── Collect intraday factor snapshot ─────────────────────────────────-
+  # --- sync just O and L with Monte-Carlo output ------------------------------
+  if "next_prediction" not in results:
+    results["next_prediction"] = {}
+
+  results["next_prediction"]["O"] = day_fcast["ohlc"]["o"]
+  results["next_prediction"]["L"] = day_fcast["ohlc"]["l"]
+
+  export_analysis_results(results)        # re-write JSON
   try:
     factors_path = collect_intraday_factors(symbol, Path("output"))
     print(f"\n📝 Intraday factors saved to {factors_path}")
