@@ -54,7 +54,7 @@ def main(symbol: str = "NVDA") -> None:
     return
 
   symbol = symbol.upper()
-  lookback = "12mo"  # daily history to pull
+  lookback = "3mo"  # daily history to pull
   mc_paths = 2_000  # Monte-Carlo paths for probabilistic forecast
 
   # ─── Fetch historical data ────────────────────────────────────────────
