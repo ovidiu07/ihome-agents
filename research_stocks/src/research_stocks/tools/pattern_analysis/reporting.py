@@ -88,7 +88,7 @@ def export_enhanced_results(results: Dict[str, Any], output_dir: str = "output/m
 
   serializable = json.loads(json.dumps(results, default=convert))
 
-  filename = os.path.join(date_dir, f"{symbol}_Json_{today.split('-')[0]}{today.split('-')[1]}")
+  filename = os.path.join(date_dir, f"{symbol}_Json_{today.split('-')[0]}{today.split('-')[1]}.json")
   with open(filename, 'w') as f:
     json.dump(serializable, f, indent=2)
 

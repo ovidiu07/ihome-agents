@@ -87,7 +87,7 @@ def main(symbol: str = "NVDA") -> None:
           status_to_remove="Duplicate"), overlap=0.7)
   results["patterns"] = daily_patterns
   results = refine_next_predictions(results, df_combined)
-
+  export_analysis_results(results)
   # ── Hourly analysis ──────────────────────────────────────────────────
   hourly_results = analyze_patterns(symbol, df_hourly_hist, df_hourly_hist.tail(48), window=12)
   hourly_patterns = cluster_and_keep_best(
