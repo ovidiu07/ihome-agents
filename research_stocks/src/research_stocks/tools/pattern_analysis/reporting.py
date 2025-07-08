@@ -70,9 +70,27 @@ def export_enhanced_results(results: Dict[str, Any], output_dir: str = "output/m
   date_dir = os.path.join(output_dir, today)
   os.makedirs(date_dir, exist_ok=True)
 
+  def convert(obj: Any):
+    if isinstance(obj, (pd.Timestamp, datetime)):
+      return obj.strftime("%Y-%m-%d %H:%M:%S")
+    if isinstance(obj, pd.DataFrame):
+      return obj.to_dict(orient="records")
+    if isinstance(obj, pd.Series):
+      return obj.to_dict()
+    try:
+      if pd.isna(obj):
+        return None
+    except Exception:
+      pass
+    if hasattr(obj, "tolist"):
+      return obj.tolist()
+    return obj
+
+  serializable = json.loads(json.dumps(results, default=convert))
+
   filename = os.path.join(date_dir, f"{symbol}_Json_{today.split('-')[0]}{today.split('-')[1]}")
   with open(filename, 'w') as f:
-    json.dump(results, f, indent=2)
+    json.dump(serializable, f, indent=2)
 
   print(f"📝 Enhanced results saved to {filename}")
 
