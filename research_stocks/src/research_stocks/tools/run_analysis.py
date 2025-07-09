@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
-
+from .pattern_analysis.today_forecast import make_today_forecast
 import pandas as pd
 
 # Optional dotenv support ----------------------------------------------------
@@ -133,7 +133,12 @@ def main(symbol: str = "NVDA") -> None:
         f"    O={ohlc['o']:.2f}  H={ohlc['h']:.2f}  "
         f"L={ohlc['l']:.2f}  C={ohlc['c']:.2f}"
         f"  (80 % interval: {day_fcast['interval_80']})")
-
+  today_blob = {
+    "stock_data_daily":   df_daily.to_dict("records"),
+    "stock_data_hourly":  df_hourly.to_dict("records"),
+    "patterns":           results["patterns"],
+  }
+  results["today_forecast"] = make_today_forecast(today_blob)
   # ─── Collect intraday factor snapshot ─────────────────────────────────-
   # --- sync just O and L with Monte-Carlo output ------------------------------
   if "next_prediction" not in results:
