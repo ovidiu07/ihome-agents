@@ -21,7 +21,7 @@ except ImportError:  # pragma: no cover
 
 # ───────── Internal imports (adjust package path if necessary) ───────────────
 from .pattern_analysis.data_fetchers import fetch_intraday_bars, \
-  fetch_daily_history
+  fetch_daily_history, fetch_hourly_history
 from .pattern_analysis.pattern_filters import (drop_duplicates,
                                               suppress_nearby_hits,
                                               cluster_and_keep_best,
@@ -54,27 +54,30 @@ def main(symbol: str = "NVDA") -> None:
     return
 
   symbol = symbol.upper()
-  lookback = "1mo"  # daily history to pull
+  daily_lookback = "1mo"  # daily history to pull
+  hourly_lookback = "5d"  # daily history to pull
   mc_paths = 2_000  # Monte-Carlo paths for probabilistic forecast
 
   # ─── Fetch historical data ────────────────────────────────────────────
-  df_hist = fetch_daily_history(symbol, period=lookback)
+  df_daily_history = fetch_daily_history(symbol, period=daily_lookback)
+  
+  df_hourly_history = fetch_hourly_history(symbol, period=hourly_lookback)
 
   # Intraday (today)
   df_today_min = fetch_intraday_bars(symbol, poly_key, limit=150)
 
   if df_today_min is None or df_today_min.empty:
     print("⚠️  Intraday pattern scan skipped — no data.")
-    df_combined = df_hist.tail(180)
-    df_summary = df_combined.tail(30)
+    df_daily = df_daily_history.tail(180)
+    df_hourly = df_hourly_history.tail(180)
     intraday_filtered: list[dict] = []
   else:
     print("\n🔍 Scanning intraday patterns …")
     df_today = pd.DataFrame([generate_evolving_daily_ohlc(df_today_min)])
-    df_combined = pd.concat([df_hist, df_today], ignore_index=True)
-    df_summary = df_combined.tail(30)
+    df_daily = pd.concat([df_daily_history, df_today], ignore_index=True)
+    df_hourly = pd.concat([df_hourly_history, df_today], ignore_index=True)
     raw_intraday = \
-    analyze_patterns(symbol, df_today_min, df_summary, window=7)["patterns"]
+    analyze_patterns(symbol, df_today_min, window=7)["patterns"]
 
     intraday_filtered = suppress_nearby_hits(
         filter_patterns_by_criteria(raw_intraday, min_value=1.2,
@@ -87,7 +90,7 @@ def main(symbol: str = "NVDA") -> None:
       print("ℹ️  No qualifying intraday patterns found.")
 
   # ─── Daily-candle pattern analysis ─────────────────────────────────────
-  results = analyze_patterns(symbol, df_combined, df_summary, window=5)
+  results = analyze_patterns(symbol, df_daily, df_hourly, window=5)
 
   daily_patterns = cluster_and_keep_best(
       remove_duplicates_by_status(drop_duplicates(results["patterns"]),
@@ -96,7 +99,7 @@ def main(symbol: str = "NVDA") -> None:
   results["patterns"] = daily_patterns
 
   # Refine to next-day predictions (provides 'name'/'direction' keys)
-  results = refine_next_predictions(results, df_combined)
+  results = refine_next_predictions(results, df_daily)
   export_analysis_results(results)
 
   # Daily pattern report
@@ -108,8 +111,8 @@ def main(symbol: str = "NVDA") -> None:
 
   # ─── Ancillary trend / ensemble bias ───────────────────────────────────
   vwap_trend = calculate_vwap_obv_trend(
-      df_today_min if df_today_min is not None and not df_today_min.empty else df_hist)
-  atr14 = calculate_atr(df_hist, period=14)
+      df_today_min if df_today_min is not None and not df_today_min.empty else df_daily_history)
+  atr14 = calculate_atr(df_daily_history, period=14)
 
   ensemble = blended_forecast(
       intraday_direction=get_intraday_bias(intraday_filtered),
@@ -118,7 +121,7 @@ def main(symbol: str = "NVDA") -> None:
   print(f"\n🔮 Ensemble forecast: {ensemble}")
 
   # ─── NEW: Probabilistic next-day forecast ──────────────────────────────
-  day_fcast = probabilistic_day_forecast(ohlc_df=df_combined,
+  day_fcast = probabilistic_day_forecast(ohlc_df=df_daily,
       active_patterns=results["patterns"], num_mc_paths=mc_paths,
       # feel free to tune
       beta_k=1.0,  # drift scaling
