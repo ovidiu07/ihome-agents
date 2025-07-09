@@ -138,6 +138,7 @@ def main(symbol: str = "NVDA") -> None:
 
   results["next_prediction"]["O"] = day_fcast["ohlc"]["o"]
   results["next_prediction"]["L"] = day_fcast["ohlc"]["l"]
+  results["next_prediction"]["C"] = day_fcast["ohlc"]["c"]
 
   export_analysis_results(results)        # re-write JSON
   try:

@@ -106,7 +106,7 @@ def _decay(t_delta_h: float, half_life_h: float) -> float:
 
 
 # ---------------------------------------------------------------------------
-# Improved high/close logic — empirical excursions conditioned on bias
+# Refined next-bar forecaster with pattern-target & IV-aware High
 # ---------------------------------------------------------------------------
 def refine_next_predictions(
     results: Dict[str, Any],
@@ -118,11 +118,18 @@ def refine_next_predictions(
     half_life_h: float = 8.0,
     hi_lo_q_hi: float = 0.75,
     hi_lo_q_lo: float = 0.25,
+    iv_move: float | None = None,          # $-move of front-day straddle
+    premarket_high: float | None = None,   # optional pre-market print
 ) -> Dict[str, Any]:
   """
   One-bar OHLC forecast.
-  Open & Low logic unchanged; High and Close now derive from
-  *conditional* empirical excursions (↑ for bull bias, ↓ for bear bias).
+
+  • High now blends three components
+      1.  Historical up-excursion quantile (as before)
+      2.  Pattern breakout height (0.8 × max bullish height)
+      3.  IV-scaled volatility multiplier
+
+  Everything else (Open, Low, Close) stays as in the previous version.
   """
   if abs(weight_pattern + weight_volatility - 1.0) > 1e-6:
     raise ValueError("weights must sum to 1")
@@ -132,82 +139,88 @@ def refine_next_predictions(
     return out
 
   latest = df.iloc[-1]
-  close = latest["Close"]
+  close  = latest["Close"]
   now_ts = pd.to_datetime(latest["Date"])
 
-  # ── 1. EW-ATR & series-level metrics ──────────────────────────────
+  # ── 1.  EW-ATR & excursion series ──────────────────────────────────
   tr = np.maximum(
       df["High"] - df["Low"],
-      np.maximum(
-          (df["High"] - df["Close"].shift()).abs(),
-          (df["Low"] - df["Close"].shift()).abs(),
-      ),
+      np.maximum((df["High"] - df["Close"].shift()).abs(),
+                 (df["Low"]  - df["Close"].shift()).abs()),
       )
-  atr_series = tr.ewm(alpha=1 / atr_window, adjust=False).mean()
+  atr_series = tr.ewm(alpha=1/atr_window, adjust=False).mean()
   atr = atr_series.iloc[-1]
 
-  # intraday excursion ratios
   up_ex = (df["High"] - df[["Open", "Close"]].max(axis=1)) / atr_series
-  dn_ex = (df[["Open", "Close"]].min(axis=1) - df["Low"]) / atr_series
-  up_move = (df["Close"] - df["Open"]) / atr_series          # + on up-days
-  dn_move = (df["Open"] - df["Close"]) / atr_series          # + on down-days
-
+  dn_ex = (df[["Open", "Close"]].min(axis=1) - df["Low"])  / atr_series
+  up_move = (df["Close"] - df["Open"]) / atr_series
+  dn_move = (df["Open"] - df["Close"]) / atr_series
   pos_mask = up_move >= 0
   neg_mask = dn_move >= 0
 
-  # ── 2. Pattern-derived probability (unchanged) ───────────────────
-  reliab_map = get_pattern_reliability()
+  # ── 2.  Pattern-derived log-odds (unchanged) ───────────────────────
+  reliab = get_pattern_reliability()
   log_odds = 0.0
   for p in results["patterns"]:
-    age_h = max((now_ts - pd.to_datetime(p["end_date"])).total_seconds() / 3600, 0.0)
-    decay = math.exp(-age_h / half_life_h)
-    base_p = max(0.01, min(0.99, reliab_map.get(p["pattern"], 0.55)))
-    strength = (p.get("value", 50) / 100)
-    contrib = math.log(base_p / (1 - base_p)) * strength * decay
-    log_odds += contrib if p["direction"] == "bullish" else -contrib
+    decay = math.exp(-(now_ts - pd.to_datetime(p["end_date"])).total_seconds()/3600 / half_life_h)
+    base  = max(0.01, min(0.99, reliab.get(p["pattern"], 0.55)))
+    strength = (p.get("value", 50)/100)
+    sign = +1 if p["direction"] == "bullish" else -1
+    log_odds += sign * math.log(base/(1-base)) * strength * decay
 
-  prob_up = 1 / (1 + math.exp(-log_odds))
-  direction = "bullish" if prob_up > 0.55 else "bearish" if prob_up < 0.45 else "neutral"
-  conf = abs(prob_up - 0.5) * 2  # 0-1
+  prob_up  = 1/(1+math.exp(-log_odds))
+  direction = "bullish" if prob_up>0.55 else "bearish" if prob_up<0.45 else "neutral"
+  conf = abs(prob_up-0.5)*2
 
-  # choose conditional quantiles based on confidence
-  def _q(base: float, span: float = 0.3) -> float:
-    return np.clip(base + span * conf, 0.05, 0.95)
+  def _q(base: float, span: float = .3):   # confidence-dependent quantile
+    return np.clip(base + span*conf, .05, .95)
 
-  # ── 3. Price targets (new High/Close logic) ───────────────────────
+  # ── 3.  Vol-multiplier from implied move ---------------------------
+  vol_scale = 1.0
+  if iv_move and iv_move>0:
+    iv_pct = iv_move / close
+    atr_pct = atr / close
+    vol_scale = np.clip(0.6 + 0.4 * (iv_pct / max(1e-6, atr_pct)), 0.6, 1.5)
+
+  # ── 4.  Pattern breakout target (bullish) --------------------------
+  max_bull_height = max((p.get("height",0) for p in results["patterns"]
+                         if p["direction"]=="bullish"), default=0.0)
+
+  # ── 5.  Price targets ---------------------------------------------
   if direction == "bullish":
-    q_hi = _q(0.55)
-    q_close = _q(0.50, 0.25)
-    hi_exc = np.nanquantile(up_ex[pos_mask], q_hi) if pos_mask.any() else hi_lo_q_hi
-    cl_mv = np.nanquantile(up_move[pos_mask], q_close) if pos_mask.any() else 0.5
-    high = close + hi_exc * atr * weight_volatility
-    low = close - np.nanquantile(dn_ex, hi_lo_q_lo) * atr * 0.5  # unchanged low logic
+    hi_exc   = np.nanquantile(up_ex[pos_mask], _q(.55)) if pos_mask.any() else hi_lo_q_hi
+    cl_mv    = np.nanquantile(up_move[pos_mask], _q(.50,.25)) if pos_mask.any() else .5
+    base_high = close + hi_exc * atr * weight_volatility * vol_scale
+    pattern_high = close + 0.8 * max_bull_height
+    high = max(base_high, pattern_high)
+    low  = close - np.nanquantile(dn_ex, hi_lo_q_lo) * atr * .5
     close_next = close + cl_mv * atr * weight_pattern
 
   elif direction == "bearish":
-    q_hi = 1 - _q(0.55)             # smaller upside
-    q_close = _q(0.50, 0.25)
-    hi_exc = np.nanquantile(up_ex[neg_mask], q_hi) if neg_mask.any() else hi_lo_q_lo
-    cl_mv = np.nanquantile(dn_move[neg_mask], q_close) if neg_mask.any() else 0.5
-    low = close - np.nanquantile(dn_ex[neg_mask], _q(0.55)) * atr * weight_volatility
-    high = close + hi_exc * atr * 0.4  # limited upside
+    hi_exc = np.nanquantile(up_ex[neg_mask], 1-_q(.55)) if neg_mask.any() else hi_lo_q_lo
+    base_high = close + hi_exc * atr * 0.4 * vol_scale
+    high = base_high
+    low  = close - np.nanquantile(dn_ex[neg_mask], _q(.55)) * atr * weight_volatility
+    cl_mv = np.nanquantile(dn_move[neg_mask], _q(.50,.25)) if neg_mask.any() else .5
     close_next = close - cl_mv * atr * weight_pattern
-
-  else:  # sideways
-    hi_exc = np.nanquantile(up_ex, 0.5)
-    dn_exc = np.nanquantile(dn_ex, 0.5)
-    high = close + hi_exc * atr * 0.5
-    low = close - dn_exc * atr * 0.5
+  else:
+    hi_exc = np.nanquantile(up_ex, .5)
+    dn_exc = np.nanquantile(dn_ex, .5)
+    high = close + hi_exc * atr * .5 * vol_scale
+    low  = close - dn_exc * atr * .5
     close_next = close
 
-  # ── 4. Gap / open (unchanged) ─────────────────────────────────────
+  # pre-market high guard-rail
+  if premarket_high:
+    high = max(high, premarket_high)
+
+  # ── 6.  Gap / open (unchanged) ------------------------------------
   gaps = ((df["Open"] / df["Close"].shift()) - 1).dropna()
   gap_pct = np.random.choice(gaps.values) if not gaps.empty else np.random.normal(0, 0.002)
   open_next = close * (1 + gap_pct)
 
-  # ensure high ≥ close & open  ; low ≤ ...
   high = max(high, open_next, close_next)
-  low = min(low, open_next, close_next)
+  low  = min(low,  open_next, close_next)
 
   out["next_prediction"] = {
     "direction": direction,
@@ -419,99 +432,108 @@ def _load_pattern_stats() -> pd.DataFrame:
   return df
 
 
-def probabilistic_day_forecast(ohlc_df: pd.DataFrame,
-    active_patterns: List[Dict[str, Any]], num_mc_paths: int = 1000,
-    atr_period: int = 14, beta_k: float = 1.0, ) -> Dict[str, Any]:
+# ---------------------------------------------------------------------------
+# Better Monte-Carlo forecaster – state-scaled bootstrap + pattern targets
+# ---------------------------------------------------------------------------
+def probabilistic_day_forecast(
+    ohlc_df: pd.DataFrame,
+    active_patterns: List[Dict[str, Any]],
+    *,
+    num_mc_paths: int = 1000,
+    atr_period: int = 14,
+    beta_k: float = 1.0,
+    bootstrap_block: int = 5,        # consecutive-day block length
+) -> Dict[str, Any]:
   """
-  Generate a probabilistic forecast for the next trading day.
+  Probabilistic OHLC forecast for the *next* regular-hours daily bar.
 
-  Parameters
-  ----------
-  ohlc_df : pd.DataFrame
-      Historical daily bars with columns ["open","high","low","close"].
-  active_patterns : list[dict]
-      Result of `refine_next_predictions`; must contain fields
-      {"name": str, "direction": "bullish" | "bearish"}.
-  num_mc_paths : int
-      How many Monte-Carlo scenarios to simulate.
-  atr_period : int
-      Look-back for ATR calculation.
-  beta_k : float
-      Scales the directional drift (higher = larger expected move).
+  Improvements vs. v1
+  -------------------
+  • **Block bootstrap** keeps short-term autocorr / volatility clustering.
+  • **Vol-regime scaling** rescales historical returns to the current 20-day σ.
+  • **Pattern price targets** blended in (height × 0.8) ⇒ fatter bullish/bear tails.
+  • **Skew-aware point close** – mean if drift |μ| > 0, median otherwise.
   """
-  # ------------------------------------------------------------------
-  # NEW: normalise incoming price data so later code can rely on it.
-  # ------------------------------------------------------------------
-  ohlc_df = _normalize_ohlc(ohlc_df)
-  active_patterns = _normalize_pattern_df(active_patterns)
+  # 0. Normalise inputs -------------------------------------------------
+  ohlc_df       = _normalize_ohlc(ohlc_df)
+  active_pats   = _normalize_pattern_df(active_patterns)
+  stats         = _load_pattern_stats()
+  last_close    = ohlc_df["close"].iloc[-1]
 
-  stats = _load_pattern_stats()
-  last_close = ohlc_df["close"].iloc[-1]
-
-  # ---- 1. Combine pattern odds (Bayesian sum of log-odds) -------------
-  if active_patterns.empty:
+  # 1. Pattern-derived probability -------------------------------------
+  if active_pats.empty:
     prob_up = 0.5
   else:
-    log_odds_sum = 0.0
-    # Dampening factor to prevent extreme probabilities
-    dampening_factor = 0.7
-    pattern_count = len(active_patterns)
+    damp    = 0.7
+    log_odds = 0.0
+    for _, p in active_pats.iterrows():
+      p_prob = stats["p"].get((p["name"], p["direction"]), 0.55)
+      p_prob = np.clip(p_prob, 0.01, 0.99)
+      sign   = +1 if p["direction"] == "bullish" else -1
+      log_odds += sign * np.log(p_prob / (1 - p_prob)) * damp
+    prob_up = 1 / (1 + np.exp(-log_odds))
 
-    for _, p in active_patterns.iterrows():
-      key = (p["name"], p["direction"])
-      p_prob = stats["p"].get(key, 0.55)  # default mild edge
-      p_prob = max(0.01, min(0.99, p_prob))
+  confidence = min(0.9, abs(prob_up - 0.5) * 2)
+  bias = "bullish" if prob_up > 0.55 else "bearish" if prob_up < 0.45 else "neutral"
+
+  # 2. Volatility & drift ----------------------------------------------
+  tr   = np.maximum(
+      ohlc_df["high"] - ohlc_df["low"],
+      np.maximum((ohlc_df["high"] - ohlc_df["close"].shift()).abs(),
+                 (ohlc_df["low"]  - ohlc_df["close"].shift()).abs()))
+  atr  = tr.rolling(atr_period, min_periods=1).mean().iloc[-1]
+  atr_pct = atr / last_close
+  mu   = (prob_up - 0.5) * 2 * beta_k * atr_pct
+
+  # 3. Block bootstrap with regime scaling -----------------------------
+  log_ret = np.log(ohlc_df["close"]).diff().dropna()
+  if log_ret.empty:
+    log_ret = pd.Series(np.random.normal(0, 1e-4, size=50))
+
+  # scale returns to current vol regime
+  sigma_hist = log_ret.std(ddof=0)
+  sigma_curr = log_ret.tail(20).std(ddof=0)
+  scaler     = sigma_curr / sigma_hist if sigma_hist > 0 else 1.0
+
+  # build block-bootstrapped sample
+  pool = []
+  while len(pool) < num_mc_paths:
+    i = np.random.randint(0, len(log_ret) - bootstrap_block)
+    pool.extend(log_ret.iloc[i:i + bootstrap_block].values)
+  sampled = np.array(pool[:num_mc_paths]) * scaler
+  sampled = np.exp(sampled + mu) - 1
+  close_samples = last_close * (1 + sampled)
+
+  # 4. Blend in pattern price targets ----------------------------------
+  tgt_prices = []
+  for _, p in active_pats.iterrows():
+    h = p.get("height", 0)
+    if h:
       sign = +1 if p["direction"] == "bullish" else -1
-      # Apply dampening factor to each log-odds contribution
-      log_odds_sum += math.log(p_prob / (1 - p_prob)) * sign * dampening_factor / max(1, math.sqrt(pattern_count))
-    prob_up = 1 / (1 + math.exp(-log_odds_sum))
+      tgt_prices.append(last_close + sign * 0.8 * h)
+  if tgt_prices:
+    close_samples = np.concatenate([close_samples, tgt_prices])
 
-  # Cap confidence at 90% to acknowledge inherent market uncertainty
-  confidence = min(0.9, abs(prob_up - 0.5) * 2.0)  # 0.0 … 0.9
-  bias = (
-    "bullish" if prob_up > 0.55 else "bearish" if prob_up < 0.45 else "neutral")
+  # 5. Build high/low samples (directional) ----------------------------
+  high_samples = np.maximum(last_close, close_samples) + np.random.uniform(0.1, 0.5, len(close_samples)) * atr
+  low_samples  = np.minimum(last_close, close_samples) - np.random.uniform(0.1, 0.5, len(close_samples)) * atr
 
-  # ---- 2. Historical ATR and expected drift ---------------------------
-  tr = np.maximum(ohlc_df["high"] - ohlc_df["low"],
-                  np.maximum((ohlc_df["high"] - ohlc_df["close"].shift()).abs(),
-                             (ohlc_df["low"] - ohlc_df[
-                               "close"].shift()).abs(), ), )
-  atr = tr.rolling(atr_period, min_periods=1).mean().iloc[-1]
-  atr_pct = atr / last_close if last_close > 0 else 0.0
-
-  mu = (prob_up - 0.5) * 2.0 * beta_k * atr_pct  # signed drift
-
-  # ---- 3. Monte-Carlo simulation of next close ------------------------
-  returns = np.log(ohlc_df["close"]).diff().dropna()
-  if returns.empty or returns.std(ddof=0) == 0.0:
-    # fall-back: thin normal noise
-    returns = pd.Series(np.random.normal(0, 1e-4, size=50))
-
-  sampled_cc = np.random.choice(returns, size=num_mc_paths, replace=True)
-  sampled_cc = np.exp(sampled_cc + mu) - 1.0  # shift by drift
-
-  close_samples = last_close * (1.0 + sampled_cc)
-  # directional intraday excursion proportional to ATR
-  high_samples = np.maximum(last_close, close_samples) + np.random.uniform(0.1,
-                                                                           0.5,
-                                                                           num_mc_paths) * atr
-  low_samples = np.minimum(last_close, close_samples) - np.random.uniform(0.1,
-                                                                          0.5,
-                                                                          num_mc_paths) * atr
-
-  # ---- 4. Point estimates & interval ----------------------------------
+  # 6. Point estimates & interval --------------------------------------
   open_ = last_close
-  close_ = float(np.median(close_samples))
-  high_ = float(np.quantile(high_samples, 0.75))
-  low_ = float(np.quantile(low_samples, 0.25))
+  close_ = float(np.mean(close_samples) if abs(mu) > 0 else np.median(close_samples))
+  high_  = float(np.quantile(high_samples, 0.75))
+  low_   = float(np.quantile(low_samples, 0.25))
   p10, p90 = np.quantile(close_samples, [0.10, 0.90])
 
-  return {"bias": bias, "prob_up": round(float(prob_up), 4),
-          "confidence": round(float(confidence), 4),
-          "expected_return": round(float(mu), 4),
-          "ohlc": {"o": open_, "h": high_, "l": low_, "c": close_},
-          "interval_80": (round(float(p10), 4), round(float(p90), 4)),
-          "patterns": active_patterns["name"].tolist() if not active_patterns.empty else [], }
+  return {
+    "bias": bias,
+    "prob_up": round(float(prob_up), 4),
+    "confidence": round(float(confidence), 4),
+    "expected_return": round(float(mu), 4),
+    "ohlc": {"o": open_, "h": high_, "l": low_, "c": close_},
+    "interval_80": (round(float(p10), 4), round(float(p90), 4)),
+    "patterns": active_pats["name"].tolist() if not active_pats.empty else [],
+  }
 
 
 # ──────────────────────────────────────────────────────────────────────────────
