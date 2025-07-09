@@ -146,78 +146,91 @@ def resolve_conflicts(patterns: List[Dict]) -> List[Dict]:
   return [p for i, p in enumerate(sorted_patterns) if keep[i]]
 
 
-def analyze_patterns(symbol: str, df: pd.DataFrame, df_summary: pd.DataFrame, window: int = 5,
-    volume_col: str = None) -> Dict[str, Any]:
+def analyze_patterns(
+    symbol: str,
+    df_daily: pd.DataFrame,
+    df_hourly: pd.DataFrame | None = None,
+    *,
+    window: int = 5,
+    volume_col: str | None = None,
+) -> Dict[str, Any]:
   """
-  Analyze price data for various patterns.
+  Scan *daily* and (optionally) *hourly* data for candlestick and chart
+  patterns and return a unified result object.
 
-  Args:
-      df: DataFrame with OHLC data
-      window: Window size for pattern detection
-      volume_col: Name of volume column if available
-
-  Returns:
-      Dictionary with analysis results
+  • Each detected pattern carries a ``timeframe`` field: "daily" | "hourly".
+  • Daily scan is mandatory; hourly scan runs only when a DataFrame is supplied.
   """
-  results = {'patterns': [], 'next_prediction': None, 'symbol': symbol, }
+  # ── helper to process one DataFrame ────────────────────────────────
+  def _scan_one(df: pd.DataFrame, timeframe: str) -> list[dict]:
+    if len(df) < window + 5:
+      return []
 
-  # Ensure we have enough data
-  if len(df) < window + 5:
-    return results
+    local: list[dict] = []
+    piv = detect_pivots(df)
 
-  # Detect pivot points
-  pivots = detect_pivots(df)
+    # --- candlesticks -------------------------------------------------
+    csticks = detect_candlestick_patterns(df)
+    for pname in csticks.columns:
+      for i in range(len(csticks)):
+        if not csticks.iloc[i][pname]:
+          continue
 
-  # Detect candlestick patterns
-  candlestick_patterns = detect_candlestick_patterns(df)
-
-  # Convert candlestick patterns to our standard format
-  for pattern_name in candlestick_patterns.columns:
-    for i in range(len(candlestick_patterns)):
-      if candlestick_patterns.iloc[i][pattern_name]:
-        # Determine pattern direction
-        direction = 'bullish'
-        if pattern_name in ['Shooting Star', 'Hanging Man',
-                            'Three Black Crows', 'Evening Star',
-                            'Bearish Harami']:
-          direction = 'bearish'
-
-        pattern = {'pattern': pattern_name,
-          'start_date': df.iloc[max(0, i - 2)]['Date'],
-          # Start a few bars before
-          'end_date': df.iloc[i]['Date'], 'direction': direction, 'value': 1.0,
-          # Default value, will be refined
-          'status': 'Confirmed'}
-
-        # Calculate pattern height
+        direction = (
+          "bearish"
+          if pname in {
+            "Shooting Star",
+            "Hanging Man",
+            "Three Black Crows",
+            "Evening Star",
+            "Bearish Harami",
+          }
+          else "bullish"
+        )
+        pat = {
+          "pattern": pname,
+          "start_date": df.iloc[max(0, i - 2)]["Date"],
+          "end_date": df.iloc[i]["Date"],
+          "direction": direction,
+          "value": 1.0,
+          "status": "Confirmed",
+          "timeframe": timeframe,
+        }
         if i > 0:
-          height = abs(df.iloc[i]['Close'] - df.iloc[i - 1]['Close'])
-          pattern['height'] = height
+          pat["height"] = abs(
+              df.iloc[i]["Close"] - df.iloc[i - 1]["Close"]
+          )
+        pat["value"] = calculate_pattern_score(pat, df, volume_col)
+        local.append(pat)
 
-        # Calculate pattern score
-        pattern['value'] = calculate_pattern_score(pattern, df, volume_col)
+    # --- geometric patterns -----------------------------------------
+    gpats = []
+    gpats.extend(detect_head_shoulders_pivot(df, piv))
+    gpats.extend(detect_double_tops_bottoms_pivot(df, piv))
+    gpats.extend(detect_triangle_pivot(df, piv, window))
+    for p in gpats:
+      p["timeframe"] = timeframe
+      p["value"] = calculate_pattern_score(p, df, volume_col)
+    local.extend(gpats)
+    return local
 
-        results['patterns'].append(pattern)
+  # ── run scans ───────────────────────────────────────────────────────
+  patterns: list[dict] = _scan_one(df_daily, "daily")
+  if df_hourly is not None and not df_hourly.empty:
+    patterns.extend(_scan_one(df_hourly, "hourly"))
 
-  # Detect chart patterns
-  chart_patterns = []
-  chart_patterns.extend(detect_head_shoulders_pivot(df, pivots))
-  chart_patterns.extend(detect_double_tops_bottoms_pivot(df, pivots))
-  chart_patterns.extend(detect_triangle_pivot(df, pivots, window))
+  # conflict resolution / sorting
+  patterns = resolve_conflicts(patterns)
+  patterns.sort(key=lambda p: pd.to_datetime(p["start_date"]))
 
-  # Calculate scores for chart patterns
-  for pattern in chart_patterns:
-    pattern['value'] = calculate_pattern_score(pattern, df, volume_col)
-
-  # Add chart patterns to results
-  results['patterns'].extend(chart_patterns)
-
-  # Resolve conflicts between patterns
-  results['patterns'] = resolve_conflicts(results['patterns'])
-  results['stock_data'] = df_summary.to_dict('records')
-  results['symbol'] = symbol
-  # Sort patterns by date
-  results['patterns'] = sorted(results['patterns'],
-                               key=lambda p: pd.to_datetime(p['start_date']))
+  # build result object
+  results = {
+    "symbol": symbol,
+    "patterns": patterns,
+    "next_prediction": None,
+    "stock_data_daily": df_daily.to_dict("records"),
+  }
+  if df_hourly is not None and not df_hourly.empty:
+    results["stock_data_hourly"] = df_hourly.to_dict("records")
 
   return results

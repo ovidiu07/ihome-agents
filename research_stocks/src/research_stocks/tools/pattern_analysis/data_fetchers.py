@@ -70,3 +70,29 @@ def fetch_daily_history(symbol: str, period: str = "12mo") -> pd.DataFrame:
   df_hist["Date"] = df_hist["Date"].dt.strftime("%Y-%m-%d")
   
   return df_hist
+
+
+def fetch_hourly_history(symbol: str, period: str = "12mo") -> pd.DataFrame:
+  """
+  Fetch hourly historical OHLCV data via yfinance and normalise
+  the date column.
+  """
+  df = (
+    yf.Ticker(symbol)
+    .history(period=period, interval="1h", auto_adjust=False)
+    .reset_index()
+    .rename(columns=lambda c: "Date" if c.lower().startswith("date") else c)
+  )
+
+  # ── Ensure datetimelike dtype ─────────────────────────────────────
+  df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+
+  # If conversion failed (all NaT) bail out early
+  if df["Date"].isna().all():
+    raise ValueError(f"No datetime index returned by yfinance for {symbol}")
+
+  # Human-readable string format
+  has_time = df["Date"].dt.time.nunique() > 1
+  df["Date"] = df["Date"].dt.strftime("%Y-%m-%d %H:%M" if has_time else "%Y-%m-%d")
+
+  return df
