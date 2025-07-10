@@ -13,20 +13,25 @@ from urllib.parse import quote_plus  # ← NEW
 from tools.market_data_tools import (PoliticalNewsTool, MarkdownFormatterTool,
                                      GrammarCheckTool)
 
+# Load environment variables from .env file
 load_dotenv()
 
+# Import LLM after environment variables are loaded to ensure proper configuration
 from crewai import LLM
 
 # Use cheaper model for data gathering / valuation to cut costs
+# GPT-3.5 is used for tasks that don't require deep analysis or complex reasoning
 cheap_llm = LLM(model="openai/gpt-3.5-turbo", temperature=0.7, max_tokens=4096,
                 top_p=0.9, frequency_penalty=0.1, presence_penalty=0.1, seed=42)
 
 # Higher-quality model for analysis tasks but with a lower token limit
+# GPT-4 with reduced token limit for balanced performance and cost efficiency
 analysis_llm = LLM(model="openai/gpt-4", temperature=0.7, max_tokens=1024,
                    top_p=0.9, frequency_penalty=0.1, presence_penalty=0.1,
                    seed=42)
 
 # Full GPT‑4 model reserved for composing the final report
+# Higher temperature (0.8) allows for more creative output in the final report
 report_llm = LLM(model="openai/gpt-4", temperature=0.8, max_tokens=2048,
                  top_p=0.9, frequency_penalty=0.1, presence_penalty=0.1,
                  seed=42)
@@ -170,11 +175,27 @@ CHUNK_SIZE = 10  # 10 finance terms ≈ 250 chars incl. OR + spaces
 
 
 def get_appropriate_llm(task_complexity: str) -> LLM:
+  """
+  Returns the appropriate LLM instance based on the task complexity level.
+
+  This function selects the most suitable language model based on the complexity
+  of the task to balance performance and cost efficiency.
+
+  Args:
+      task_complexity: A string indicating the complexity level of the task.
+                      Valid values are "low", "medium", or any other value (treated as "high").
+
+  Returns:
+      LLM: The appropriate LLM instance for the given complexity level.
+          - "low" complexity tasks use the cheaper GPT-3.5 model
+          - "medium" complexity tasks use GPT-4 with reduced token limit
+          - All other values default to the full GPT-4 model with higher token limit
+  """
   if task_complexity == "low":
-    return cheap_llm
+    return cheap_llm  # Use GPT-3.5 for simpler tasks
   if task_complexity == "medium":
-    return analysis_llm
-  return report_llm
+    return analysis_llm  # Use GPT-4 with reduced token limit for medium complexity
+  return report_llm  # Default to full GPT-4 for high complexity tasks
 
 
 # AGENTOPS_API_KEY = os.getenv("AGENTOPS_API_KEY") or 'cd414e33-e4a2-44ec-a71f-b30360462ee8'
@@ -229,21 +250,56 @@ def harvest_data_offline(symbols: list[str], days_back: int = 3) -> list[dict]:
 
 
 def _or(items):
+  """
+  Joins a list of items with the OR operator for use in search queries.
+
+  Args:
+      items: A list of strings to be joined with OR operators.
+
+  Returns:
+      str: A string with each item enclosed in quotes and joined with " OR ".
+           Example: '"item1" OR "item2" OR "item3"'
+  """
   return " OR ".join(f'"{t}"' for t in items)
 
 
 def build_news_query(symbol: str, terms: list[str]) -> str:
   """
-    Boolean string compatible with NewsAPI's /v2/everything endpoint.
-    Ensures the symbol (or one alias) appears in the searchable fields.
-    """
+  Constructs a boolean search query string compatible with NewsAPI's /v2/everything endpoint.
+
+  This function creates a complex search query that ensures the stock symbol or one of its
+  aliases appears in the searchable fields, along with relevant finance terms, while
+  excluding unwanted terms.
+
+  Args:
+      symbol: The stock symbol to search for (e.g., "AAPL", "MSFT").
+      terms: A list of finance-related terms to include in the search.
+
+  Returns:
+      str: A formatted boolean search query string with three components:
+           1. Company block: The symbol and its aliases joined with OR
+           2. Finance block: The finance terms joined with OR
+           3. Not block: Terms to exclude from results
+
+  Example:
+      build_news_query("NVDA", ["earnings", "revenue"])
+      Returns: '("NVDA" OR "Nvidia" OR "Nvidia Corp") AND ("earnings" OR "revenue") 
+               AND NOT ("gaming review" OR "video game trailer" OR ...)'
+  """
+  # Get company aliases from the SYMBOL_ALIASES dictionary
   aliases = SYMBOL_ALIASES.get(symbol.upper(), [])
+
+  # Create the company block with the symbol and its aliases
   # e.g. '"NVDA" OR "Nvidia" OR "Nvidia Corp"'
   company_block = _or([symbol.upper(), *aliases])
 
+  # Create the finance terms block
   finance_block = _or(terms)
+
+  # Create the block of terms to exclude
   not_block = _or(BAD_TERMS)
 
+  # Combine all blocks into the final query
   # Require the company_block to be in title OR description
   return (f'({company_block}) AND ({finance_block}) '
           f'AND NOT ({not_block})')
@@ -251,22 +307,57 @@ def build_news_query(symbol: str, terms: list[str]) -> str:
 
 @CrewBase
 class StockAnalysisCrew:
+  """
+  A crew-based system for analyzing stock market data and generating reports.
+
+  This class orchestrates a set of AI agents that work together to:
+  1. Harvest financial news and market data for specified stock symbols
+  2. Analyze patterns and trends in the collected data
+  3. Enhance forecasts using LLM-based analysis
+  4. Compose comprehensive market reports
+
+  The crew uses configuration from YAML files to define agents and tasks.
+  It leverages different LLM models based on task complexity to balance
+  performance and cost efficiency.
+
+  Attributes:
+      agents_config: Path to the YAML file containing agent configurations
+      tasks_config: Path to the YAML file containing task configurations
+  """
   agents_config = 'config/agents.yaml'
   tasks_config = 'config/tasks.yaml'
 
   @lru_cache(maxsize=1)
   def agents_yaml(self) -> dict:
-    if isinstance(self.agents_config, dict):  # Avoid re-parsing
+    """
+    Loads and caches the agent configuration from YAML.
+
+    This method reads the agent configuration from the YAML file specified in
+    agents_config. It uses lru_cache to avoid re-parsing the file on subsequent calls.
+
+    Returns:
+        dict: A dictionary containing the agent configurations.
+    """
+    if isinstance(self.agents_config, dict):  # Avoid re-parsing if already a dict
       return self.agents_config
     with open(Path(self.agents_config), "r") as f:
-      return yaml.safe_load(f)
+      return yaml.safe_load(f)  # Parse YAML into Python dictionary
 
   @lru_cache(maxsize=1)
   def tasks_yaml(self) -> dict:
-    if isinstance(self.tasks_config, dict):  # Avoid re-parsing
+    """
+    Loads and caches the task configuration from YAML.
+
+    This method reads the task configuration from the YAML file specified in
+    tasks_config. It uses lru_cache to avoid re-parsing the file on subsequent calls.
+
+    Returns:
+        dict: A dictionary containing the task configurations.
+    """
+    if isinstance(self.tasks_config, dict):  # Avoid re-parsing if already a dict
       return self.tasks_config
     with open(Path(self.tasks_config), "r") as f:
-      return yaml.safe_load(f)
+      return yaml.safe_load(f)  # Parse YAML into Python dictionary
 
   # # ------------------------------------------------------------------ #
   # # Helper accessors for the ETF and equity watch‑lists declared in    #
@@ -282,125 +373,256 @@ class StockAnalysisCrew:
 
   @agent
   def data_harvester_agent(self) -> Agent:
+    """
+    Creates an agent responsible for harvesting financial news and market data.
+
+    This agent collects data from various sources including news APIs and financial
+    data providers. It uses a lower-cost LLM model (GPT-3.5) since the task is
+    primarily data collection rather than complex analysis.
+
+    Returns:
+        Agent: A configured Agent instance with the PoliticalNewsTool for data collection.
+    """
     return Agent(config=self.agents_yaml()["data_harvester"], verbose=True,
                  llm=get_appropriate_llm("low"), tools=[PoliticalNewsTool()])
 
   @agent
   def report_composer_agent(self) -> Agent:
+    """
+    Creates an agent responsible for composing comprehensive market reports.
+
+    This agent takes the analyzed data and creates well-formatted, readable reports.
+    It uses formatting and grammar checking tools to ensure high-quality output.
+    Despite the creative nature of report writing, it uses a lower-cost LLM model
+    to balance cost efficiency.
+
+    Returns:
+        Agent: A configured Agent instance with MarkdownFormatterTool and GrammarCheckTool.
+    """
     return Agent(config=self.agents_yaml()["report_composer"], verbose=True,
                  llm=get_appropriate_llm("low"),
                  tools=[MarkdownFormatterTool(), GrammarCheckTool()])
 
   @agent
   def forecast_enhancer_agent(self) -> Agent:
-    """Agent that uses an LLM to refine the forecast based on merged JSON."""
+    """
+    Creates an agent responsible for enhancing stock forecasts using LLM analysis.
+
+    This agent takes the pattern analysis results and news data, then uses a more
+    powerful LLM model (GPT-4) to refine the forecast with deeper analysis and
+    reasoning. The medium complexity setting balances the need for sophisticated
+    analysis with cost considerations.
+
+    Returns:
+        Agent: A configured Agent instance with a medium-complexity LLM model.
+    """
     return Agent(config=self.agents_yaml()["forecast_enhancer"], verbose=True,
                  llm=get_appropriate_llm("medium"), )
 
   @task
   def harvest_data(self) -> Task:
     """
-    Executes the task to harvest data, handling potential errors in input and outputs.
+    Creates a task to harvest financial news and market data for specified stock symbols.
+
+    This method configures a task that uses the data_harvester_agent to collect
+    relevant financial news and data. It constructs a query string that combines
+    the stock symbols with financial terms to ensure relevant results.
+
+    The method includes comprehensive error handling to catch configuration issues
+    and other potential errors during task creation.
+
+    Returns:
+        Task: A configured Task instance for data harvesting.
+
+    Raises:
+        RuntimeError: If there are issues with task configuration or execution.
+        ValueError: If no valid symbols are provided.
     """
     try:
+      # Get the list of stock symbols from the instance attribute
       symbol_list = getattr(self, '_symbol', [])
       if not symbol_list or not isinstance(symbol_list, list):
         raise ValueError("Symbols are invalid or not provided.")
 
       # Ensure the symbols are correctly formatted as a comma-separated string
       symbol_input = ", ".join(symbol_list)
+
+      # Construct a comprehensive query string with financial terms
       query_string = (f'("{symbol_input}") AND ('
                       '"financial results" OR "quarterly earnings" OR revenue OR '
                       '"profit margin" OR "stock movement" OR analyst OR '
                       '"institutional investor" OR "sector outlook" OR "press release"'
                       ')')
+
+      # Log the inputs being passed to the agent for debugging
       print(">>>> Task input being passed to data_harvester_agent:",
             {"symbol": symbol_input, "query": query_string, "days_back": 3})
+
+      # Create and return the task with proper configuration
       return Task(config=self.tasks_yaml().get("harvest_data", {}),
                   agent=self.data_harvester_agent(),
                   inputs={"symbol": symbol_input, "query": query_string,
                           "days_back": 3}, )
     except KeyError as e:
+      # Handle missing or invalid task configuration
       raise RuntimeError(
           f"Task configuration for harvest_data is missing or invalid: {e}")
     except Exception as e:
+      # Handle any other unexpected errors
       raise RuntimeError(f"Error occurred in harvest_data task: {e}")
 
   @task
   def enhance_forecast(self) -> Task | None:
-    """Read merged JSON for the first symbol and produce an enhanced forecast."""
+    """
+    Creates a task to enhance stock forecasts using LLM analysis of merged data.
+
+    This method reads the merged JSON file containing pattern analysis results and
+    news data for the first symbol in the list, then configures a task that uses
+    the forecast_enhancer_agent to produce a more sophisticated forecast.
+
+    The method includes error handling for cases where no symbol is available or
+    the merged JSON file doesn't exist.
+
+    Returns:
+        Task: A configured Task instance for forecast enhancement.
+        None: If no symbol is available or the merged JSON file doesn't exist.
+    """
+    # Get the list of stock symbols from the instance attribute
     symbols = getattr(self, "_symbol", [])
+
+    # Extract the first symbol from the list or use the string directly
     if isinstance(symbols, list) and symbols:
-      symbol = symbols[0]
+      symbol = symbols[0]  # Use the first symbol in the list
     elif isinstance(symbols, str):
-      symbol = symbols
+      symbol = symbols  # Use the symbol string directly
     else:
       print("[Warning] enhance_forecast: No symbol available.")
       return None
+
+    # Construct the path to the merged JSON file
     merged_path = Path("output") / f"pattern_analysis_results_{symbol}.json"
+
+    # Check if the merged JSON file exists
     if not merged_path.exists():
       print("[Warning] merged JSON not found – skipping enhancer.")
       return None
 
+    # Read the merged JSON file
     merged_text = merged_path.read_text(encoding="utf-8")
+
+    # Create and return the task with proper configuration
     return Task(config=self.tasks_yaml().get("enhance_forecast", {}),
                 agent=self.forecast_enhancer_agent(),
                 inputs={"symbol": symbol, "merged_json": merged_text})
 
   def _chunk(self, items: list[str], size: int) -> list[list[str]]:
-    """Split a list into fixed-size chunks while preserving order."""
+    """
+    Splits a list into fixed-size chunks while preserving the original order.
+
+    This utility method is used to divide a large list of items (such as stock symbols)
+    into smaller, more manageable chunks for processing. This is particularly useful
+    when generating reports for multiple stocks, as it allows for better organization
+    and potentially parallel processing.
+
+    Args:
+        items: The list of strings to be chunked.
+        size: The maximum size of each chunk.
+
+    Returns:
+        A list of lists, where each inner list contains at most 'size' items
+        from the original list, in the same order.
+
+    Example:
+        _chunk(["AAPL", "MSFT", "GOOGL", "AMZN", "TSLA"], 2)
+        Returns: [["AAPL", "MSFT"], ["GOOGL", "AMZN"], ["TSLA"]]
+    """
+    # Use list comprehension to create chunks of the specified size
     return [items[i:i + size] for i in range(0, len(items), size)]
 
   @task
   def compose_report_part1(self) -> Task | None:
     """
-    Generate report sections for the first part of symbols with added error handling.
+    Creates a task to compose the first part of the market report for a chunk of symbols.
+
+    This method configures a task that uses the report_composer_agent to generate
+    a comprehensive market report for the first chunk of stock symbols (up to 10).
+    It includes error handling for cases where no symbols are available or the
+    configuration is missing.
+
+    The method uses the _chunk utility to divide the symbols into manageable groups,
+    and processes only the first chunk in this method. For additional symbols,
+    the compose_report_part2 method can be used.
+
+    Returns:
+        Task: A configured Task instance for report composition.
+        None: If no symbols are available, the first chunk is empty, or there's a configuration error.
     """
     try:
+      # Get the list of stock symbols from the instance attribute
       symbols = getattr(self, '_symbol', [])
 
-      # Validate symbols
+      # Validate that symbols is a non-empty list
       if not symbols or not isinstance(symbols, list):
         print("[Error] No tickers available or invalid data format.")
         return None
 
-      # Get the first chunk of symbols
+      # Get the first chunk of symbols (up to 10)
       symbol_chunk = self._chunk(symbols, 10)[0] if len(symbols) > 0 else []
       if not symbol_chunk:
         print("[Warning] compose_report_part1: No tickers in the first chunk.")
         return None
 
+      # Create and return the task with proper configuration
       return Task(config=self.tasks_yaml().get("compose_report", {}),
                   agent=self.report_composer_agent(),
                   input={"symbol": ", ".join(symbol_chunk)})
     except KeyError as e:
+      # Handle missing task configuration
       print(
           f"[Error] Task configuration for compose_report_part1 is missing: {e}")
       return None
     except Exception as e:
+      # Handle any other unexpected errors
       print(f"[Error] Unexpected error in compose_report_part1: {e}")
       return None
 
-  # @task
+  # @task  # ⚠️ This task is currently disabled (decorator commented out)
   def compose_report_part2(self) -> Task | None:
-    """Second half of report: Handles remaining symbols not processed in part 1."""
+    """
+    Creates a task to compose the second part of the market report for remaining symbols.
+
+    This method is designed to handle the second chunk of stock symbols (symbols 11-20)
+    that weren't processed in compose_report_part1. It configures a task that uses
+    the report_composer_agent to generate a comprehensive market report for these
+    additional symbols.
+
+    Note: This method is currently disabled (the @task decorator is commented out),
+    which suggests it may not be actively used in the current workflow or is being
+    reserved for future use when handling larger symbol lists.
+
+    Returns:
+        Task: A configured Task instance for report composition of the second chunk.
+        None: If there aren't enough symbols for a second chunk or the second chunk is empty.
+    """
+    # Get the list of stock symbols from the instance attribute
     symbol = getattr(self, '_symbol', [])
 
-    # Skip task if both watchlists don't have enough tickers for a second chunk.
+    # Skip task if there aren't enough tickers for a second chunk (need more than 10)
     has_symbol_part2 = len(symbol) > 10
     if not has_symbol_part2:
       print(
           "[Warning] Skipping compose_report_part2: Not enough tickers to split")
       return None
 
-    # Retrieve second chunks (safe with length check).
+    # Retrieve the second chunk of symbols (symbols 11-20)
     symbol_part2 = self._chunk(symbol, 10)[1] if len(symbol) > 10 else []
 
-    # Skip task if both parts are empty.
+    # Skip task if the second chunk is empty
     if not symbol_part2:
       print("[Warning] compose_report_part2: No tickers in second chunk.")
       return None
 
+    # Create and return the task with proper configuration
     return Task(config=self.tasks_yaml()["compose_report_followup"],
                 agent=self.report_composer_agent(),
                 output_file="daily_market_brief.md",
@@ -408,62 +630,106 @@ class StockAnalysisCrew:
 
   def merge_news_into_results(self, symbol: str | None = None):
     """
-    Copy or merge headlines from raw_news.json into the corresponding
-    pattern‑analysis results file. If `symbol` is omitted, the method
-    uses the instance’s `_symbol` list.
+    Merges news headlines from raw_news.json into the pattern analysis results file.
+
+    This method takes news headlines collected by the data harvester and merges them
+    into the corresponding pattern analysis results file for a specific stock symbol.
+    This combined data is then used by the forecast enhancer to produce more accurate
+    and context-aware forecasts.
+
+    The method handles both creating a new results file if one doesn't exist and
+    updating an existing file with the news headlines.
+
+    Args:
+        symbol: The stock symbol to merge news for. If None, the method attempts
+               to use the first symbol from the instance's _symbol attribute.
+
+    Raises:
+        ValueError: If no symbol is provided and none can be inferred.
+        FileNotFoundError: If the raw_news.json file doesn't exist.
     """
-    # Resolve the symbol to use
+    # Resolve the symbol to use - either use the provided symbol or infer from instance
     if symbol is None:
       symbols = getattr(self, "_symbol", [])
       if isinstance(symbols, list) and symbols:
-        symbol = symbols[0]
+        symbol = symbols[0]  # Use the first symbol in the list
       elif isinstance(symbols, str):
-        symbol = symbols
+        symbol = symbols  # Use the symbol string directly
       else:
         raise ValueError("Symbol could not be inferred for merge operation.")
 
+    # Define paths to the news file and results file
     news_path = Path("raw_news.json")
     results_path = Path("output") / f"pattern_analysis_results_{symbol}.json"
 
-    # Read news list
+    # Check if the news file exists
     if not news_path.exists():
       raise FileNotFoundError("raw_news.json not found. Run harvester first.")
 
+    # Read the news data from the JSON file
     news = json.loads(news_path.read_text(encoding="utf-8"))
 
-    # Merge into results (create or update)
+    # Either update existing results or create a new results object
     if results_path.exists():
+      # Update existing results file
       results = json.loads(results_path.read_text(encoding="utf-8"))
     else:
+      # Create new results object if no file exists
       results = {}
 
+    # Add the news headlines to the results
     results["news_headlines"] = news
+
+    # Ensure the output directory exists
     results_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Write the updated results back to the file
     results_path.write_text(json.dumps(results, indent=2), encoding="utf-8")
 
+    # Log the successful merge
     print(f"✅ Merged {len(news)} headlines into {results_path}")
 
   @crew
   def build_market_brief(self) -> None:
-    """End-to-end flow for one symbol.
-
-    1) Harvest & de-dupe headlines (no LLM cost)
-    2) Merge them into the pattern-analysis JSON
-    3) Ask GPT-4 to enhance the forecast
     """
+    Executes the end-to-end workflow for generating a market brief for a stock symbol.
+
+    This method orchestrates the complete process of generating a market brief:
+    1. Harvests and de-duplicates financial news headlines (without using LLM)
+    2. Merges the headlines into the pattern analysis results JSON file
+    3. Uses GPT-4 to enhance the forecast based on the combined data
+
+    The method uses a sequential process to ensure that each step is completed
+    before the next one begins. It includes error handling to abort the process
+    if no runnable tasks are available.
+
+    This is the main entry point for the stock analysis workflow and should be
+    called with the target symbol(s) set in the _symbol attribute.
+
+    Returns:
+        None
+    """
+    # Log the start of the process
     print(f"Starting Market Briefing Crew for symbol: {self._symbol}...")
+
+    # Step 1: Harvest financial news data without using LLM (cost-efficient)
     harvest_data_offline(self._symbol, days_back=1)
 
+    # Step 2: Merge the harvested news into the pattern analysis results
     self.merge_news_into_results()
 
+    # Prepare the list of tasks to run
     tasks: list[Task] = []
 
+    # Step 3: Add the forecast enhancement task if available
     forecast_task = self.enhance_forecast()
     if forecast_task:
       tasks.append(forecast_task)
 
+    # Abort if no tasks are available to run
     if not tasks:
       print("[Error] No runnable tasks – aborting crew.")
       return
 
+    # Execute all tasks in sequential order
     Crew(tasks=tasks, process=Process.sequential).run()
