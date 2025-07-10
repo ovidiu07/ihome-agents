@@ -36,22 +36,22 @@ class QuoteResponse(BaseModel):
     return datetime.utcfromtimestamp(v).isoformat() + "Z"
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-def get_quote(symbol: str,
-    session: Optional[requests.Session] = None, ) -> QuoteResponse:
+def get_quote(
+    symbol: str,
+    session: Optional[requests.Session] = None,
+) -> QuoteResponse:
   """
   Return a real-time quote for `symbol`.
   https://finnhub.io/docs/api/quote
   """
-  data = _call_finnhub("/quote", {"symbol": symbol.upper()}, session, )
+  data = _call_finnhub("/quote", {"symbol": symbol.upper()}, session)
   return QuoteResponse.model_validate(data)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
 class CompanyNewsItem(BaseModel):
   """Single company news item from Finnhub API."""
-  category: str  # Category, e.g., 'company'
-  datetime: int | str  # UNIX timestamp or ISO8601 UTC string
+  category: str                            # Category, e.g., 'company'
+  datetime: int | str                      # UNIX timestamp or ISO8601 UTC string
   headline: str
   id: int
   image: Optional[str]
@@ -71,16 +71,22 @@ class CompanyNewsResponse(RootModel[List[CompanyNewsItem]]):
   """List of company news items."""
 
 
-def get_company_news(symbol: str, start: datetime, end: datetime,
-    session: Optional[requests.Session] = None, ) -> List[CompanyNewsItem]:
+def get_company_news(
+    symbol: str,
+    start: datetime,
+    end: datetime,
+    session: Optional[requests.Session] = None,
+) -> List[CompanyNewsItem]:
   """
   Return company news for `symbol` from `start` to `end`.
   https://finnhub.io/docs/api/company-news
   """
-  params = {"symbol": symbol.upper(), "from": start.strftime("%Y-%m-%d"),
-    "to": end.strftime("%Y-%m-%d"), }
+  params = {
+    "symbol": symbol.upper(),
+    "from": start.strftime("%Y-%m-%d"),
+    "to":   end.strftime("%Y-%m-%d"),
+  }
   data = _call_finnhub("/company-news", params, session)
-  # Parse each item into our Pydantic model
   resp = CompanyNewsResponse.model_validate(data)
   return resp.root
 
@@ -94,8 +100,11 @@ def _get_token() -> str:
   return token
 
 
-def _call_finnhub(path: str, params: Dict[str, Any],
-    session: Optional[requests.Session] = None, ) -> Any:
+def _call_finnhub(
+    path: str,
+    params: Dict[str, Any],
+    session: Optional[requests.Session] = None,
+) -> Any:
   """Perform a GET request with retries and backoff."""
   token = _get_token()
   params = dict(params)
@@ -108,8 +117,7 @@ def _call_finnhub(path: str, params: Dict[str, Any],
     try:
       resp = sess.get(url, params=params, timeout=10)
       if resp.status_code >= 400:
-        raise requests.HTTPError(f"{resp.status_code} error: {resp.text}",
-            response=resp)
+        raise requests.HTTPError(f"{resp.status_code} error: {resp.text}", response=resp)
       data = resp.json()
       if not data:
         raise ValueError("Empty response")
@@ -121,19 +129,19 @@ def _call_finnhub(path: str, params: Dict[str, Any],
         raise
       time.sleep(delay)
       delay *= BACKOFF_FACTOR
+
   raise RuntimeError("Unreachable retry loop")
 
 
 class CandleResponse(BaseModel):
   """Candle data series."""
-
   o: list[float] = Field(..., description="Open prices")
   h: list[float] = Field(..., description="High prices")
   l: list[float] = Field(..., description="Low prices")
   c: list[float] = Field(..., description="Close prices")
   v: list[float] = Field(..., description="Volume values")
-  t: list[str] = Field(..., description="ISO time stamps")
-  s: str = Field(..., description="Response status")
+  t: list[str]   = Field(..., description="ISO time stamps")
+  s: str         = Field(..., description="Response status")
 
   @field_validator("t", mode="before")
   def _to_iso(cls, v: list[int]) -> list[str]:
@@ -145,7 +153,6 @@ class CandleResponse(BaseModel):
 
 class PatternRecognitionResponse(BaseModel):
   """Detected chart patterns."""
-
   symbol: str
   points: list[dict[str, Any]]
 
@@ -155,7 +162,6 @@ class PatternRecognitionResponse(BaseModel):
 
 class SupportResistanceResponse(BaseModel):
   """Support and resistance levels."""
-
   levels: list[float]
 
   class Config:
@@ -164,7 +170,6 @@ class SupportResistanceResponse(BaseModel):
 
 class AggregateIndicatorResponse(BaseModel):
   """Aggregated indicator score."""
-
   symbol: str
   technicalAnalysis: dict[str, Any]
 
@@ -174,7 +179,6 @@ class AggregateIndicatorResponse(BaseModel):
 
 class TechnicalIndicatorResponse(BaseModel):
   """Custom technical indicator data."""
-
   symbol: str
   indicator: str
   data: dict[str, Any]
@@ -183,69 +187,85 @@ class TechnicalIndicatorResponse(BaseModel):
     extra = "allow"
 
 
-def get_candles(symbol: str, resolution: str, start: datetime, end: datetime,
-    session: Optional[requests.Session] = None, ) -> CandleResponse:
+def get_candles(
+    symbol: str,
+    resolution: str,
+    start: datetime,
+    end: datetime,
+    session: Optional[requests.Session] = None,
+) -> CandleResponse:
   """Return OHLCV candles for ``symbol`` between ``start`` and ``end``."""
-  params = {"symbol": symbol.upper(), "resolution": resolution,
-    "from": int(start.timestamp()), "to": int(end.timestamp()), }
+  params = {
+    "symbol":     symbol.upper(),
+    "resolution": resolution,
+    "from":       int(start.timestamp()),
+    "to":         int(end.timestamp()),
+  }
   data = _call_finnhub("/stock/candle", params, session)
-  return CandleResponse.parse_obj(data)
+  return CandleResponse.model_validate(data)
 
 
-def get_pattern_recognition(symbol: str,
-    session: Optional[requests.Session] = None, ) -> PatternRecognitionResponse:
+def get_pattern_recognition(
+    symbol: str,
+    session: Optional[requests.Session] = None,
+) -> PatternRecognitionResponse:
   """Return detected classical patterns for ``symbol``."""
   data = _call_finnhub("/scan/pattern", {"symbol": symbol.upper()}, session)
-  return PatternRecognitionResponse.parse_obj(data)
+  return PatternRecognitionResponse.model_validate(data)
 
 
-def get_support_resistance(symbol: str,
-    session: Optional[requests.Session] = None, ) -> SupportResistanceResponse:
+def get_support_resistance(
+    symbol: str,
+    session: Optional[requests.Session] = None,
+) -> SupportResistanceResponse:
   """Return support and resistance levels for ``symbol``."""
-  data = _call_finnhub("/scan/support-resistance", {"symbol": symbol.upper()},
-      session)
-  return SupportResistanceResponse.parse_obj(data)
+  data = _call_finnhub("/scan/support-resistance", {"symbol": symbol.upper()}, session)
+  return SupportResistanceResponse.model_validate(data)
 
 
-def get_aggregate_indicator(symbol: str,
-    session: Optional[requests.Session] = None, ) -> AggregateIndicatorResponse:
+def get_aggregate_indicator(
+    symbol: str,
+    session: Optional[requests.Session] = None,
+) -> AggregateIndicatorResponse:
   """Return Finnhub's aggregate technical indicator for ``symbol``."""
-  data = _call_finnhub("/scan/technical-indicator", {"symbol": symbol.upper()},
-      session)
-  return AggregateIndicatorResponse.parse_obj(data)
+  data = _call_finnhub("/scan/technical-indicator", {"symbol": symbol.upper()}, session)
+  return AggregateIndicatorResponse.model_validate(data)
 
 
-def get_technical_indicator(symbol: str, indicator: str = "rsi",
-    resolution: str = "D", start: datetime | None = None,
-    end: datetime | None = None, timeperiod: int = 14,
-    session: Optional[requests.Session] = None, ) -> TechnicalIndicatorResponse:
+def get_technical_indicator(
+    symbol: str,
+    indicator: str = "rsi",
+    resolution: str = "D",
+    start: datetime | None = None,
+    end: datetime | None = None,
+    timeperiod: int = 14,
+    session: Optional[requests.Session] = None,
+) -> TechnicalIndicatorResponse:
   """Return custom technical indicator data for ``symbol``."""
   if start is None:
     start = datetime.utcnow() - timedelta(days=365)
   if end is None:
     end = datetime.utcnow()
-  params = {"symbol": symbol.upper(), "indicator": indicator,
-    "resolution": resolution, "from": int(start.timestamp()),
-    "to": int(end.timestamp()), "timeperiod": timeperiod, }
+  params = {
+    "symbol":     symbol.upper(),
+    "indicator":  indicator,
+    "resolution": resolution,
+    "from":       int(start.timestamp()),
+    "to":         int(end.timestamp()),
+    "timeperiod": timeperiod,
+  }
   data = _call_finnhub("/indicator", params, session)
-  return TechnicalIndicatorResponse.parse_obj(data)
+  return TechnicalIndicatorResponse.model_validate(data)
 
 
-def fetch_all(symbol: str, resolution: str = "D", lookback_days: int = 365,
+def fetch_all(
+    symbol: str,
+    resolution: str = "D",
+    lookback_days: int = 365,
     save_path: str | Path = Path("data"),
-    session: Optional[requests.Session] = None, ) -> Path:
-  """High-level façade.
-
-  1. Calls each ``get_*`` helper above.
-  2. Normalises numeric payloads via ``pydantic`` models.
-  3. Combines data into a single dictionary with keys ``symbol``,
-     ``last_updated_utc``, ``candles``, ``patterns``,
-     ``support_resistance``, ``aggregate_indicator`` and
-     ``technical_indicators``.
-  4. Persists as pretty‑printed JSON:
-     ``<save_path>/<symbol>_analysis.json``.
-  5. Returns the :class:`Path` to the written file.
-  """
+    session: Optional[requests.Session] = None,
+) -> Path:
+  """High-level façade to fetch & save all endpoints."""
   end = datetime.utcnow()
   start = end - timedelta(days=lookback_days)
 
@@ -254,13 +274,17 @@ def fetch_all(symbol: str, resolution: str = "D", lookback_days: int = 365,
   support_resistance = get_support_resistance(symbol, session)
   aggregate_indicator = get_aggregate_indicator(symbol, session)
   technical_indicators = get_technical_indicator(symbol, resolution=resolution,
-      start=start, end=end, session=session)
+                                                 start=start, end=end, session=session)
 
-  result = {"symbol": symbol.upper(), "last_updated_utc": end.isoformat() + "Z",
-    "candles": candles.dict(), "patterns": patterns.dict().get("points", []),
-    "support_resistance": support_resistance.dict(),
-    "aggregate_indicator": aggregate_indicator.dict(),
-    "technical_indicators": technical_indicators.dict(), }
+  result = {
+    "symbol":                symbol.upper(),
+    "last_updated_utc":      end.isoformat() + "Z",
+    "candles":               candles.dict(),
+    "patterns":              patterns.dict().get("points", []),
+    "support_resistance":    support_resistance.dict(),
+    "aggregate_indicator":   aggregate_indicator.dict(),
+    "technical_indicators":  technical_indicators.dict(),
+  }
 
   path = Path(save_path)
   path.mkdir(parents=True, exist_ok=True)
@@ -273,20 +297,13 @@ def fetch_all(symbol: str, resolution: str = "D", lookback_days: int = 365,
 
 def main() -> None:
   """CLI entry point."""
-  import argparse
-
-  # parser = argparse.ArgumentParser(description="Fetch Finnhub pattern analysis data")
-  # parser.add_argument("--symbol", required=True, help="Ticker symbol")
-  # args = parser.parse_args()
-  #
-  # path = fetch_all(args.symbol)
-  # print(path)
+  # Example usage:
   q = get_quote("AAPL")
   print(q.c, q.h, q.l, q.o, q.pc, q.t)
-  news = get_company_news("AAPL", datetime.utcnow() - timedelta(days=1),
-                          datetime.utcnow())
+
+  news = get_company_news("AAPL", datetime.utcnow() - timedelta(days=1), datetime.utcnow())
   for item in news:
-    print(item.datetime, item.headline)
+    print(item)
 
 
 if __name__ == "__main__":
