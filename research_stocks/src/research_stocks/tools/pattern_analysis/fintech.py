@@ -157,7 +157,9 @@ def get_support_resistance(
     session: Optional[requests.Session] = None,
 ) -> SupportResistanceResponse:
     """Return support and resistance levels for ``symbol``."""
-    data = _call_finnhub("/scan/support-resistance", {"symbol": symbol.upper()}, session)
+    data = _call_finnhub(
+        "/scan/support-resistance", {"symbol": symbol.upper()}, session
+    )
     return SupportResistanceResponse.parse_obj(data)
 
 
@@ -251,9 +253,7 @@ def main() -> None:
     """CLI entry point."""
     import argparse
 
-    parser = argparse.ArgumentParser(
-        description="Fetch Finnhub pattern analysis data"
-    )
+    parser = argparse.ArgumentParser(description="Fetch Finnhub pattern analysis data")
     parser.add_argument("--symbol", required=True, help="Ticker symbol")
     args = parser.parse_args()
 
