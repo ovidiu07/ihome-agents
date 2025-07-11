@@ -679,7 +679,7 @@ def _df_from_finnhub_candles(candles_block: Dict[str, Any]) -> pd.DataFrame:
         dt = pd.to_datetime(tvals, unit="s", utc=True)
     else:
         dt = pd.to_datetime(tvals, utc=True)
-    df["Date"] = dt.dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+    df["Date"] = dt.strftime("%Y-%m-%dT%H:%M:%SZ")
     return df
 
 

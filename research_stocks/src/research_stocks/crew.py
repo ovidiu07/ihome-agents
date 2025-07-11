@@ -760,7 +760,7 @@ class StockAnalysisCrew:
 
       # Compute immediate forecast from raw Finnhub payload
       try:
-        results["next_prediction"] = next_prediction_from_finnhub(results)
+        results["next_prediction_from_finnhub"] = next_prediction_from_finnhub(results)
       except Exception as exc:
         logging.warning("Failed to build next_prediction: %s", exc)
 
