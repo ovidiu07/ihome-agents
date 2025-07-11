@@ -214,7 +214,7 @@ def main(symbol: str = "NVDA") -> None:
   }
 
   # Generate an intraday forecast for today based on the combined data
-  results["today_forecast"] = make_today_forecast(today_blob)
+  # results["today_forecast"] = make_today_forecast(today_blob)
 
   # ─── Collect intraday factor snapshot ─────────────────────────────────-
   # Ensure the next_prediction dictionary exists in the results

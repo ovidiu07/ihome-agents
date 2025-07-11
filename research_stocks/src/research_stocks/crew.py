@@ -728,21 +728,34 @@ class StockAnalysisCrew:
 
     try:
       # Fetch all Finnhub data for this symbol
-      fintech_file = fetch_all(symbol, resolution="D", lookback_days=1,
+      fintech_daily = fetch_all(symbol, resolution="D", lookback_days=10,
                                save_path="output")
+      fintech_hourly = fetch_all(symbol, resolution="60", lookback_days=2,
+                                save_path="output")
+      fintech_minutes = fetch_all(symbol, resolution="15", lookback_days=2,
+                                save_path="output")
     except Exception as e:
       logging.warning("Failed to fetch fintech data: %s", e)
-      fintech_file = None
+      fintech_daily = None
+      fintech_hourly = None
+      fintech_minutes = None
 
-    if fintech_file:
+    if fintech_daily:
       results_path = Path("output") / f"pattern_analysis_results_{symbol}.json"
       try:
         results = json.loads(results_path.read_text(encoding="utf-8"))
       except FileNotFoundError:
         results = {}
       # Load fetched fintech data
-      fintech_data = json.loads(fintech_file.read_text(encoding="utf-8"))
-      results["fintech"] = fintech_data
+      fintech_data_daily = json.loads(fintech_daily.read_text(encoding="utf-8"))
+      results["fintech_daily"] = fintech_data_daily
+
+      fintech_data_hourly = json.loads(fintech_hourly.read_text(encoding="utf-8"))
+      results["fintech_hourly"] = fintech_data_hourly
+
+      fintech_data_minutes = json.loads(fintech_minutes.read_text(encoding="utf-8"))
+      results["fintech_minutes"] = fintech_data_minutes
+
       results_path.parent.mkdir(parents=True, exist_ok=True)
       results_path.write_text(json.dumps(results, indent=2),
                               encoding="utf-8")

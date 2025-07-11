@@ -153,7 +153,6 @@ class CandleResponse(BaseModel):
 
 class PatternRecognitionResponse(BaseModel):
   """Detected chart patterns."""
-  symbol: str
   points: list[dict[str, Any]]
 
   class Config:
@@ -170,7 +169,7 @@ class SupportResistanceResponse(BaseModel):
 
 class AggregateIndicatorResponse(BaseModel):
   """Aggregated indicator score."""
-  symbol: str
+  trend: dict[str, Any]
   technicalAnalysis: dict[str, Any]
 
   class Config:
@@ -179,9 +178,6 @@ class AggregateIndicatorResponse(BaseModel):
 
 class TechnicalIndicatorResponse(BaseModel):
   """Custom technical indicator data."""
-  symbol: str
-  indicator: str
-  data: dict[str, Any]
 
   class Config:
     extra = "allow"
@@ -207,28 +203,31 @@ def get_candles(
 
 def get_pattern_recognition(
     symbol: str,
+    resolution: str,
     session: Optional[requests.Session] = None,
 ) -> PatternRecognitionResponse:
   """Return detected classical patterns for ``symbol``."""
-  data = _call_finnhub("/scan/pattern", {"symbol": symbol.upper()}, session)
+  data = _call_finnhub("/scan/pattern", {"symbol": symbol.upper(),"resolution": resolution.upper()}, session)
   return PatternRecognitionResponse.model_validate(data)
 
 
 def get_support_resistance(
     symbol: str,
+    resolution: str,
     session: Optional[requests.Session] = None,
 ) -> SupportResistanceResponse:
   """Return support and resistance levels for ``symbol``."""
-  data = _call_finnhub("/scan/support-resistance", {"symbol": symbol.upper()}, session)
+  data = _call_finnhub("/scan/support-resistance", {"symbol": symbol.upper(),"resolution": resolution.upper()}, session)
   return SupportResistanceResponse.model_validate(data)
 
 
 def get_aggregate_indicator(
     symbol: str,
+    resolution: str,
     session: Optional[requests.Session] = None,
 ) -> AggregateIndicatorResponse:
   """Return Finnhub's aggregate technical indicator for ``symbol``."""
-  data = _call_finnhub("/scan/technical-indicator", {"symbol": symbol.upper()}, session)
+  data = _call_finnhub("/scan/technical-indicator", {"symbol": symbol.upper(), "resolution": resolution.upper()}, session)
   return AggregateIndicatorResponse.model_validate(data)
 
 
@@ -238,7 +237,7 @@ def get_technical_indicator(
     resolution: str = "D",
     start: datetime | None = None,
     end: datetime | None = None,
-    timeperiod: int = 14,
+    timeperiod: int = 1,
     session: Optional[requests.Session] = None,
 ) -> TechnicalIndicatorResponse:
   """Return custom technical indicator data for ``symbol``."""
@@ -261,7 +260,7 @@ def get_technical_indicator(
 def fetch_all(
     symbol: str,
     resolution: str = "D",
-    lookback_days: int = 365,
+    lookback_days: int = 2,
     save_path: str | Path = Path("data"),
     session: Optional[requests.Session] = None,
 ) -> Path:
@@ -270,14 +269,15 @@ def fetch_all(
   start = end - timedelta(days=lookback_days)
 
   candles = get_candles(symbol, resolution, start, end, session)
-  patterns = get_pattern_recognition(symbol, session)
-  support_resistance = get_support_resistance(symbol, session)
-  aggregate_indicator = get_aggregate_indicator(symbol, session)
+  patterns = get_pattern_recognition(symbol,resolution, session)
+  support_resistance = get_support_resistance(symbol,resolution, session)
+  aggregate_indicator = get_aggregate_indicator(symbol, resolution, session)
   technical_indicators = get_technical_indicator(symbol, resolution=resolution,
                                                  start=start, end=end, session=session)
 
   result = {
     "symbol":                symbol.upper(),
+    "resolution":            resolution,
     "last_updated_utc":      end.isoformat() + "Z",
     "candles":               candles.dict(),
     "patterns":              patterns.dict().get("points", []),
@@ -288,7 +288,7 @@ def fetch_all(
 
   path = Path(save_path)
   path.mkdir(parents=True, exist_ok=True)
-  outfile = path / f"{symbol.upper()}_analysis.json"
+  outfile = path / f"{symbol.upper()}_analysis_{resolution}.json"
   with outfile.open("w", encoding="utf-8") as f:
     json.dump(result, f, indent=2)
   logger.info("Saved analysis to %s", outfile)
