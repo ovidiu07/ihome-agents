@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 from functools import lru_cache
 from pathlib import Path
 from urllib.parse import quote_plus  # ← NEW
+from tools.pattern_analysis.fintech import fetch_all
 
 from tools.market_data_tools import (PoliticalNewsTool, MarkdownFormatterTool,
                                      GrammarCheckTool)
@@ -724,6 +725,27 @@ class StockAnalysisCrew:
 
     # harvest_data_offline expects a list of symbols
     harvest_data_offline([symbol], days_back=1)
+
+    try:
+      # Fetch all Finnhub data for this symbol
+      fintech_file = fetch_all(symbol, resolution="D", lookback_days=1,
+                               save_path="output")
+    except Exception as e:
+      logging.warning("Failed to fetch fintech data: %s", e)
+      fintech_file = None
+
+    if fintech_file:
+      results_path = Path("output") / f"pattern_analysis_results_{symbol}.json"
+      try:
+        results = json.loads(results_path.read_text(encoding="utf-8"))
+      except FileNotFoundError:
+        results = {}
+      # Load fetched fintech data
+      fintech_data = json.loads(fintech_file.read_text(encoding="utf-8"))
+      results["fintech"] = fintech_data
+      results_path.parent.mkdir(parents=True, exist_ok=True)
+      results_path.write_text(json.dumps(results, indent=2),
+                              encoding="utf-8")
 
     # ── Step 2: Pull company‐specific news via Finnhub and append ────────
     try:
