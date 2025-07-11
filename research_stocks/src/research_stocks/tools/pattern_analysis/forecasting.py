@@ -649,3 +649,160 @@ def _normalize_pattern_df(df: Any) -> pd.DataFrame:
         c for c in work.columns if c not in ("name", "direction")
     ]
     return work[ordered_cols]
+
+
+def _df_from_finnhub_candles(candles_block: Dict[str, Any]) -> pd.DataFrame:
+    """Convert Finnhub candle payload into a tidy DataFrame."""
+
+    required = ["o", "h", "l", "c", "v", "t"]
+    for key in required:
+        if key not in candles_block:
+            raise ValueError(f"candles block missing key: {key}")
+
+    lengths = {len(candles_block[key]) for key in required}
+    if len(lengths) != 1:
+        raise ValueError("candle vectors must be of equal length")
+
+    df = pd.DataFrame(
+        {
+            "Date": candles_block["t"],
+            "Open": candles_block["o"],
+            "High": candles_block["h"],
+            "Low": candles_block["l"],
+            "Close": candles_block["c"],
+            "Volume": candles_block["v"],
+        }
+    )
+
+    tvals = candles_block["t"]
+    if tvals and isinstance(tvals[0], (int, float, np.integer, np.floating)):
+        dt = pd.to_datetime(tvals, unit="s", utc=True)
+    else:
+        dt = pd.to_datetime(tvals, utc=True)
+    df["Date"] = dt.dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+    return df
+
+
+def _patterns_from_finnhub(raw_patterns: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Simplify Finnhub pattern objects."""
+
+    if not raw_patterns:
+        return []
+
+    out: List[Dict[str, Any]] = []
+    for p in raw_patterns:
+        pat = p.get("patternname")
+        direction = str(p.get("patterntype", "")).lower()
+        value = float(p.get("value", 1.0))
+        start_ts = p.get("atime") or p.get("start_time")
+        end_ts = p.get("dtime") or p.get("end_time")
+
+        start_dt = pd.to_datetime(start_ts, unit="s", utc=True).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        )
+        end_dt = pd.to_datetime(end_ts, unit="s", utc=True).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        )
+
+        out.append(
+            {
+                "pattern": pat,
+                "direction": direction,
+                "value": value,
+                "start_date": start_dt,
+                "end_date": end_dt,
+            }
+        )
+
+    return out
+
+
+def next_prediction_from_finnhub(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a next_prediction dict from raw Finnhub payload."""
+
+    for key in ("fintech_minutes", "fintech_hourly", "fintech_daily"):
+        if key in payload:
+            candles_key = key
+            break
+    else:
+        raise ValueError("no candle data found")
+
+    df = _df_from_finnhub_candles(payload[candles_key]["candles"])
+
+    patterns: List[Dict[str, Any]] = []
+    if "fintech_daily" in payload:
+        patterns.extend(_patterns_from_finnhub(payload["fintech_daily"].get("patterns", [])))
+    if candles_key != "fintech_daily":
+        patterns.extend(_patterns_from_finnhub(payload[candles_key].get("patterns", [])))
+
+    results: Dict[str, Any] = {"patterns": patterns}
+    results = refine_next_predictions(results, df)
+    return results.get("next_prediction", {})
+
+
+if __name__ == "__main__":
+    # Basic self-test
+    from pprint import pprint
+
+    SAMPLE_PAYLOAD = {
+        "fintech_daily": {
+            "candles": {
+                "o": [489.99, 493.81, 497.38],
+                "h": [493.5, 500.13, 498.75],
+                "l": [488.7, 493.44, 495.225],
+                "c": [491.09, 498.84, 497.72],
+                "v": [16319641.0, 13984829.0, 13981605.0],
+                "t": [
+                    "2025-07-02T00:00:00Z",
+                    "2025-07-03T00:00:00Z",
+                    "2025-07-07T00:00:00Z",
+                ],
+                "s": "ok",
+            },
+            "patterns": [
+                {
+                    "aprice": 394.65,
+                    "atime": 1744588800,
+                    "dprice": 355.67,
+                    "dtime": 1745193600,
+                    "mature": 1,
+                    "patternname": "two black gapping",
+                    "patterntype": "bearish",
+                    "status": "complete",
+                    "symbol": "MSFT.US",
+                }
+            ],
+        },
+        "fintech_hourly": {
+            "candles": {
+                "o": [500.6, 499.56],
+                "h": [501.02, 505.74],
+                "l": [499.35, 498.75],
+                "c": [499.35, 505.525],
+                "v": [48349.0, 3668551.0],
+                "t": ["2025-07-09T12:00:00Z", "2025-07-09T13:00:00Z"],
+                "s": "ok",
+            },
+            "patterns": [
+                {
+                    "aprice": 506.75,
+                    "atime": 1752069600,
+                    "dprice": 0,
+                    "dtime": 0,
+                    "patternname": "Double Top",
+                    "patterntype": "bearish",
+                    "start_time": 1752066000,
+                    "end_time": 1752156000,
+                }
+            ],
+        },
+    }
+
+    df_test = _df_from_finnhub_candles(SAMPLE_PAYLOAD["fintech_daily"]["candles"])
+    assert len(df_test) == len(SAMPLE_PAYLOAD["fintech_daily"]["candles"]["t"])
+
+    pred = next_prediction_from_finnhub(SAMPLE_PAYLOAD)
+    assert pred["L"] <= min(pred["O"], pred["C"])
+    assert pred["H"] >= max(pred["O"], pred["C"])
+
+    pprint(pred)
