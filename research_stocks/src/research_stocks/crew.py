@@ -2,6 +2,7 @@
 import json
 import math  # ← NEW
 import yaml
+import logging
 from crewai import Agent, Crew, Process, Task
 from crewai.project import CrewBase, agent, crew, task
 from crewai_tools import WebsiteSearchTool, ScrapeWebsiteTool, TXTSearchTool
@@ -713,6 +714,25 @@ class StockAnalysisCrew:
 
     # Step 1: Harvest financial news data without using LLM (cost-efficient)
     harvest_data_offline(self._symbol, days_back=1)
+
+    try:
+      from tools.pattern_analysis.fintech import (
+          get_company_news, datetime, timedelta)
+      start = datetime.utcnow() - timedelta(days=1)
+      end = datetime.utcnow()
+      news_items = get_company_news(self._symbol, start, end)
+
+      results_path = Path("output") / f"pattern_analysis_results_{self._symbol}.json"
+      try:
+        results = json.loads(results_path.read_text(encoding="utf-8"))
+      except FileNotFoundError:
+        results = {}
+
+      results["company_news"] = [item.dict() for item in news_items]
+      results_path.parent.mkdir(parents=True, exist_ok=True)
+      results_path.write_text(json.dumps(results, indent=2), encoding="utf-8")
+    except Exception as exc:
+      logging.warning("Failed to append company news: %s", exc)
 
     # Step 2: Merge the harvested news into the pattern analysis results
     self.merge_news_into_results()
