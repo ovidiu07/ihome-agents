@@ -679,7 +679,7 @@ class StockAnalysisCrew:
       results = {}
 
     # Add the news headlines to the results
-    results["news_headlines"] = news
+    #results["news_headlines"] = news
 
     # Ensure the output directory exists
     results_path.parent.mkdir(parents=True, exist_ok=True)
@@ -732,8 +732,8 @@ class StockAnalysisCrew:
                                save_path="output")
       fintech_hourly = fetch_all(symbol, resolution="60", lookback_days=2,
                                 save_path="output")
-      fintech_minutes = fetch_all(symbol, resolution="15", lookback_days=2,
-                                save_path="output")
+      # fintech_minutes = fetch_all(symbol, resolution="15", lookback_days=2,
+      #                           save_path="output")
     except Exception as e:
       logging.warning("Failed to fetch fintech data: %s", e)
       fintech_daily = None
@@ -753,8 +753,8 @@ class StockAnalysisCrew:
       fintech_data_hourly = json.loads(fintech_hourly.read_text(encoding="utf-8"))
       results["fintech_hourly"] = fintech_data_hourly
 
-      fintech_data_minutes = json.loads(fintech_minutes.read_text(encoding="utf-8"))
-      results["fintech_minutes"] = fintech_data_minutes
+      # fintech_data_minutes = json.loads(fintech_minutes.read_text(encoding="utf-8"))
+      # results["fintech_minutes"] = fintech_data_minutes
 
       results_path.parent.mkdir(parents=True, exist_ok=True)
       results_path.write_text(json.dumps(results, indent=2),
@@ -776,7 +776,7 @@ class StockAnalysisCrew:
         results = {}
 
       # Serialize Pydantic news items
-      results["company_news"] = [item.dict() for item in news_items]
+      #results["company_news"] = [item.dict() for item in news_items]
       results_path.parent.mkdir(parents=True, exist_ok=True)
       results_path.write_text(json.dumps(results, indent=2), encoding="utf-8")
     except Exception as exc:
