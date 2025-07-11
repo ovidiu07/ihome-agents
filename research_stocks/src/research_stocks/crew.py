@@ -11,6 +11,7 @@ from functools import lru_cache
 from pathlib import Path
 from urllib.parse import quote_plus  # ← NEW
 from tools.pattern_analysis.fintech import fetch_all
+from tools.pattern_analysis.forecasting import next_prediction_from_finnhub
 
 from tools.market_data_tools import (PoliticalNewsTool, MarkdownFormatterTool,
                                      GrammarCheckTool)
@@ -750,15 +751,22 @@ class StockAnalysisCrew:
       fintech_data_daily = json.loads(fintech_daily.read_text(encoding="utf-8"))
       results["fintech_daily"] = fintech_data_daily
 
-      fintech_data_hourly = json.loads(fintech_hourly.read_text(encoding="utf-8"))
+      fintech_data_hourly = json.loads(
+          fintech_hourly.read_text(encoding="utf-8"))
       results["fintech_hourly"] = fintech_data_hourly
 
       # fintech_data_minutes = json.loads(fintech_minutes.read_text(encoding="utf-8"))
       # results["fintech_minutes"] = fintech_data_minutes
 
+      # Compute immediate forecast from raw Finnhub payload
+      try:
+        results["next_prediction"] = next_prediction_from_finnhub(results)
+      except Exception as exc:
+        logging.warning("Failed to build next_prediction: %s", exc)
+
       results_path.parent.mkdir(parents=True, exist_ok=True)
-      results_path.write_text(json.dumps(results, indent=2),
-                              encoding="utf-8")
+      results_path.write_text(
+          json.dumps(results, indent=2), encoding="utf-8")
 
     # ── Step 2: Pull company‐specific news via Finnhub and append ────────
     try:
