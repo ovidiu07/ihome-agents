@@ -712,43 +712,53 @@ class StockAnalysisCrew:
     # Log the start of the process
     print(f"Starting Market Briefing Crew for symbol: {self._symbol}...")
 
-    # Step 1: Harvest financial news data without using LLM (cost-efficient)
-    harvest_data_offline(self._symbol, days_back=1)
+    # ── Step 1: Harvest financial news data (cost-efficient, no LLM) ───────
+    # Normalize self._symbol (which may be a list) into a single string
+    symbols = self._symbol
+    if isinstance(symbols, list) and symbols:
+      symbol = symbols[0]
+    elif isinstance(symbols, str):
+      symbol = symbols
+    else:
+      raise ValueError("No valid symbol provided for market brief")
 
+    # harvest_data_offline expects a list of symbols
+    harvest_data_offline([symbol], days_back=1)
+
+    # ── Step 2: Pull company‐specific news via Finnhub and append ────────
     try:
-      from tools.pattern_analysis.fintech import (
-          get_company_news, datetime, timedelta)
+      from tools.pattern_analysis.fintech import get_company_news
+      from datetime import datetime, timedelta
+
       start = datetime.utcnow() - timedelta(days=1)
       end = datetime.utcnow()
-      news_items = get_company_news(self._symbol, start, end)
+      news_items = get_company_news(symbol, start, end)
 
-      results_path = Path("output") / f"pattern_analysis_results_{self._symbol}.json"
+      results_path = Path("output") / f"pattern_analysis_results_{symbol}.json"
       try:
         results = json.loads(results_path.read_text(encoding="utf-8"))
       except FileNotFoundError:
         results = {}
 
+      # Serialize Pydantic news items
       results["company_news"] = [item.dict() for item in news_items]
       results_path.parent.mkdir(parents=True, exist_ok=True)
       results_path.write_text(json.dumps(results, indent=2), encoding="utf-8")
     except Exception as exc:
       logging.warning("Failed to append company news: %s", exc)
 
-    # Step 2: Merge the harvested news into the pattern analysis results
+    # ── Step 3: Merge any remaining harvested headlines ───────────────────
     self.merge_news_into_results()
 
-    # Prepare the list of tasks to run
+    # ── Step 4: Queue up forecast enhancement if available ───────────────
     tasks: list[Task] = []
-
-    # Step 3: Add the forecast enhancement task if available
     forecast_task = self.enhance_forecast()
     if forecast_task:
       tasks.append(forecast_task)
 
-    # Abort if no tasks are available to run
     if not tasks:
       print("[Error] No runnable tasks – aborting crew.")
       return
 
-    # Execute all tasks in sequential order
+    # Execute all tasks in sequence
     Crew(tasks=tasks, process=Process.sequential).run()
