@@ -729,7 +729,7 @@ class StockAnalysisCrew:
 
     try:
       # Fetch all Finnhub data for this symbol
-      fintech_daily = fetch_all(symbol, resolution="D", lookback_days=10,
+      fintech_daily = fetch_all(symbol, resolution="D", lookback_days=35,
                                save_path="output")
       fintech_hourly = fetch_all(symbol, resolution="60", lookback_days=2,
                                 save_path="output")
