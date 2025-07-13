@@ -2,12 +2,19 @@
 
 import functools
 import math
+import os
+import logging
 from typing import Dict, Any, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
+import yfinance as yf
 
 from .utils import get_pattern_reliability
+
+logger = logging.getLogger(__name__)
+if os.getenv("FORECAST_DEBUG") == "1":
+    logging.basicConfig(level=logging.DEBUG)
 
 
 # forecasting.py
@@ -363,7 +370,7 @@ def build_feature_stack(
             df_hist["High"]
             .sub(df_hist["Low"])
             .div(df_hist["Close"])
-            .rolling(10)
+            .rolling(10, min_periods=1)
             .mean()
             .iloc[-1]
         )
@@ -766,6 +773,7 @@ def next_prediction_from_finnhub(payload: Dict[str, Any]) -> Dict[str, Any]:
     daily = payload["fintech_daily"]
     df_d = _df_from_finnhub_candles(daily["candles"])
     last_close = df_d["Close"].iloc[-1]
+    pre_open = df_d["Open"].iloc[-1]
 
     # --- Daily ATR and drift -------------------------------------------------
     tr = np.maximum(
@@ -781,9 +789,12 @@ def next_prediction_from_finnhub(payload: Dict[str, Any]) -> Dict[str, Any]:
     rsi_val = float(_rsi(df_d["Close"]).iloc[-1])
     macd, macd_sig, _ = _macd(df_d["Close"])
     macd_diff = float(macd.iloc[-1] - macd_sig.iloc[-1])
-    ma_fast = df_d["Close"].rolling(5).mean().iloc[-1]
-    ma_slow = df_d["Close"].rolling(20).mean().iloc[-1]
+    ma_fast = df_d["Close"].rolling(5, min_periods=1).mean().iloc[-1]
+    ma_slow = df_d["Close"].rolling(20, min_periods=1).mean().iloc[-1]
     ma_bias = float(np.tanh((ma_fast - ma_slow) / atr)) if atr else 0.0
+
+    open_t = last_close * 0.3 + pre_open * 0.7
+    premarket_gap = (open_t / last_close) - 1
 
     agg = daily.get("aggregate_indicator", {})
     ta_count = agg.get("technicalAnalysis", {}).get("count", {})
@@ -799,9 +810,14 @@ def next_prediction_from_finnhub(payload: Dict[str, Any]) -> Dict[str, Any]:
     patterns = _patterns_from_finnhub(daily.get("patterns", []))
     reliab = get_pattern_reliability()
     log_odds = 0.0
+    now_dt = pd.to_datetime(df_d["Date"].iloc[-1])
     for p in patterns:
         base_p = max(0.01, min(0.99, reliab.get(p["pattern"], 0.55)))
-        contrib = math.log(base_p / (1 - base_p)) * (p.get("value", 50) / 100)
+        age_d = max((now_dt - pd.to_datetime(p["end_date"])).days, 0)
+        decay = math.exp(-age_d / 15)
+        contrib = (
+            math.log(base_p / (1 - base_p)) * (p.get("value", 50) / 100) * decay
+        )
         log_odds += contrib if p["direction"] == "bullish" else -contrib
 
     prob_pattern = 1 / (1 + math.exp(-log_odds))
@@ -812,29 +828,56 @@ def next_prediction_from_finnhub(payload: Dict[str, Any]) -> Dict[str, Any]:
         + 0.2 * ma_bias
         + 0.1 * sentiment
         + 0.1 * sr_bias
+        + 0.1 * np.tanh(premarket_gap * 15)
     )
     prob_up = float(np.clip(0.5 + indicator_score / 2, 0, 1))
     prob_up = 0.6 * prob_up + 0.4 * prob_pattern
 
     direction = "bullish" if prob_up > 0.55 else "bearish" if prob_up < 0.45 else "neutral"
-    confidence = float(min(1.0, abs(prob_up - 0.5) * 2))
+    confidence = float(min(1.0, abs(prob_up - 0.5) * 2.5))
     drift = (prob_up - 0.5) * atr * 0.5
 
-    open_t = last_close
     close_t = last_close + drift
-    high_t = close_t + atr * 0.5
-    low_t = close_t - atr * 0.5
+    vol_ratio = atr / last_close if last_close else 0.0
+    if vol_ratio < 0.01:
+        hi_mult, lo_mult = 0.35, 0.45
+    elif vol_ratio < 0.02:
+        hi_mult, lo_mult = 0.45, 0.55
+    else:
+        hi_mult, lo_mult = 0.60, 0.75
+    high_t = close_t + atr * hi_mult
+    low_t = close_t - atr * lo_mult
+
+    symbol = daily.get("symbol", "")
+    try:
+        st = yf.Ticker(symbol)
+        exp = st.options[0]
+        call, put = st.option_chain(exp)[:2]
+        iv_move = (call.lastPrice + put.lastPrice) / last_close
+        cap = iv_move * 1.5
+        high_t = min(high_t, last_close + cap * last_close)
+        low_t = max(low_t, last_close - cap * last_close)
+    except Exception:
+        cap = 0.0
+
+    logger.debug(
+        "premkt_gap=%0.3f  ATR=%0.2f  iv_cap=%0.2f  hi_mult=%0.2f",
+        premarket_gap,
+        atr,
+        cap,
+        hi_mult,
+    )
     high_t = max(high_t, open_t, close_t)
     low_t = min(low_t, open_t, close_t)
 
     forecast = {
         "direction": direction,
-        "prob_up": round(prob_up, 3),
-        "confidence": round(confidence, 3),
-        "O": round(float(open_t), 2),
-        "H": round(float(high_t), 2),
-        "L": round(float(low_t), 2),
-        "C": round(float(close_t), 2),
+        "prob_up": round(float(np.nan_to_num(prob_up)), 3),
+        "confidence": round(float(np.nan_to_num(confidence)), 3),
+        "O": round(float(np.nan_to_num(open_t)), 2),
+        "H": round(float(np.nan_to_num(high_t)), 2),
+        "L": round(float(np.nan_to_num(low_t)), 2),
+        "C": round(float(np.nan_to_num(close_t)), 2),
     }
 
     # --- Intraday refinement -------------------------------------------------
@@ -885,26 +928,33 @@ def next_prediction_from_finnhub(payload: Dict[str, Any]) -> Dict[str, Any]:
         prob_hour = float(np.clip(0.5 + ind_adj / 2, 0, 1))
 
         prob_up = (prob_up * 0.7 + prob_hour * 0.2 + prob_pat_h * 0.1)
-        confidence = float(min(1.0, abs(prob_up - 0.5) * 2))
+        confidence = float(min(1.0, abs(prob_up - 0.5) * 2.5))
         direction = "bullish" if prob_up > 0.55 else "bearish" if prob_up < 0.45 else "neutral"
 
         drift_h = ret_h * last_close_h
         close_t = last_close_h + 0.7 * drift + 0.3 * drift_h
-        high_t = close_t + np.mean([atr, atr_h]) * 0.5
-        low_t = close_t - np.mean([atr, atr_h]) * 0.5
-        open_t = last_close_h
+        vol_ratio = atr / last_close if last_close else 0.0
+        if vol_ratio < 0.01:
+            hi_mult, lo_mult = 0.35, 0.45
+        elif vol_ratio < 0.02:
+            hi_mult, lo_mult = 0.45, 0.55
+        else:
+            hi_mult, lo_mult = 0.60, 0.75
+        high_t = close_t + atr * hi_mult
+        low_t = close_t - atr * lo_mult
+        open_t = last_close_h * 0.3 + pre_open * 0.7
         high_t = max(high_t, open_t, close_t)
         low_t = min(low_t, open_t, close_t)
 
         forecast.update(
             {
                 "direction": direction,
-                "prob_up": round(prob_up, 3),
-                "confidence": round(confidence, 3),
-                "O": round(float(open_t), 2),
-                "H": round(float(high_t), 2),
-                "L": round(float(low_t), 2),
-                "C": round(float(close_t), 2),
+                "prob_up": round(float(np.nan_to_num(prob_up)), 3),
+                "confidence": round(float(np.nan_to_num(confidence)), 3),
+                "O": round(float(np.nan_to_num(open_t)), 2),
+                "H": round(float(np.nan_to_num(high_t)), 2),
+                "L": round(float(np.nan_to_num(low_t)), 2),
+                "C": round(float(np.nan_to_num(close_t)), 2),
             }
         )
 
