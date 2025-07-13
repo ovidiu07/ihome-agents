@@ -729,14 +729,14 @@ class StockAnalysisCrew:
 
     try:
       # Fetch all Finnhub data for this symbol
-      fintech_daily = fetch_all(symbol, resolution="D", lookback_days=35,
+      fintech_daily = fetch_all(symbol, resolution="D", lookback_days=14,
                                save_path="output")
-      fintech_hourly = fetch_all(symbol, resolution="60", lookback_days=2,
+      fintech_hourly = fetch_all(symbol, resolution="60", lookback_days=3,
+                                save_path="output")
+      fintech_weekly = fetch_all(symbol, resolution="W", lookback_days=14,
                                 save_path="output")
       fintech_minutes = fetch_all(symbol, resolution="1", lookback_days=1,
-                                 save_path="output")
-      fintech_weekly = fetch_all(symbol, resolution="W", lookback_days=365,
-                                save_path="output")
+                                  save_path="output")
     except Exception as e:
       logging.warning("Failed to fetch fintech data: %s", e)
       fintech_daily = None
