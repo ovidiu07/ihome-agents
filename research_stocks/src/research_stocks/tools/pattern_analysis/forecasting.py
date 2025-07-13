@@ -747,218 +747,121 @@ def _macd(series: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9) ->
 
 
 def next_prediction_from_finnhub(payload: Dict[str, Any]) -> Dict[str, Any]:
-    """Return a probabilistic OHLC forecast from a Finnhub payload.
+    """Return a single OHLC forecast by stacking multiple timeframes.
 
-    Steps
-    -----
-    1. Parse daily candles and indicators to build a baseline view.
-    2. Compute bias, probability and price targets from daily data.
-    3. If hourly data is available, refine the forecast using intraday
-       information and blend the targets.
-
-    Parameters
-    ----------
-    payload : dict
-        JSON block returned by Finnhub with at least ``fintech_daily``.
-
-    Returns
-    -------
-    dict
-        ``{"direction", "prob_up", "confidence", "O", "H", "L", "C"}``
+    The payload dictionary should contain 1-minute, 1-hour, 1-day and
+    1-week candle data under the keys ``fintech_minutes``, ``fintech_hourly``,
+    ``fintech_daily`` and ``fintech_weekly`` respectively. Each block follows
+    the structure returned by :func:`fetch_all`, namely ``{"candles": {"o", "h",
+    "l", "c"}}``. The function computes a small forecast for each timeframe
+    using ATR driven rules and blends them weighted by confidence.
     """
 
-    if "fintech_daily" not in payload or "candles" not in payload["fintech_daily"]:
-        raise ValueError("fintech_daily candles required")
+    def _extract(data: Dict[str, Any]) -> Optional[Tuple[List[float], List[float], List[float]]]:
+        if not data or "candles" not in data:
+            return None
+        cdl = data["candles"]
+        return cdl.get("h", []), cdl.get("l", []), cdl.get("c", [])
 
-    daily = payload["fintech_daily"]
-    df_d = _df_from_finnhub_candles(daily["candles"])
-    last_close = df_d["Close"].iloc[-1]
-    pre_open = df_d["Open"].iloc[-1]
+    def _atr(high: List[float], low: List[float], close: List[float], window: int = 14) -> float:
+        if len(close) < 2:
+            return 0.0
+        prev_close = np.concatenate([[close[0]], close[:-1]])
+        tr = np.maximum(np.array(high) - np.array(low),
+                        np.maximum(np.abs(np.array(high) - prev_close),
+                                   np.abs(np.array(low) - prev_close)))
+        if len(tr) < window:
+            return float(np.mean(tr))
+        return float(np.mean(tr[-window:]))
 
-    # --- Daily ATR and drift -------------------------------------------------
-    tr = np.maximum(
-        df_d["High"] - df_d["Low"],
-        np.maximum(
-            (df_d["High"] - df_d["Close"].shift()).abs(),
-            (df_d["Low"] - df_d["Close"].shift()).abs(),
-        ),
-    )
-    atr = tr.ewm(alpha=1 / 14, adjust=False).mean().iloc[-1]
+    def _mini_forecast(high: List[float], low: List[float], close: List[float]) -> Dict[str, float]:
+        n = len(close)
+        if n < 2:
+            return {}
+        atr = _atr(high, low, close)
+        last_close = close[-1]
+        ref_close = close[-10] if n > 10 else close[0]
+        delta = last_close - ref_close
 
-    # --- Daily indicator signals --------------------------------------------
-    rsi_val = float(_rsi(df_d["Close"]).iloc[-1])
-    macd, macd_sig, _ = _macd(df_d["Close"])
-    macd_diff = float(macd.iloc[-1] - macd_sig.iloc[-1])
-    ma_fast = df_d["Close"].rolling(5, min_periods=1).mean().iloc[-1]
-    ma_slow = df_d["Close"].rolling(20, min_periods=1).mean().iloc[-1]
-    ma_bias = float(np.tanh((ma_fast - ma_slow) / atr)) if atr else 0.0
+        if atr > 0 and delta > atr:
+            trend = "UP"
+        elif atr > 0 and delta < -atr:
+            trend = "DOWN"
+        else:
+            trend = "SIDEWAYS"
 
-    open_t = last_close * 0.3 + pre_open * 0.7
-    premarket_gap = (open_t / last_close) - 1
+        if atr == 0:
+            atr = last_close * 0.001
 
-    agg = daily.get("aggregate_indicator", {})
-    ta_count = agg.get("technicalAnalysis", {}).get("count", {})
-    sentiment = (ta_count.get("buy", 0) - ta_count.get("sell", 0)) / max(1, sum(ta_count.values()))
+        if trend == "UP":
+            close_f = last_close + 0.5 * atr
+            high_f = last_close + atr
+            low_f = last_close - 0.2 * atr
+        elif trend == "DOWN":
+            close_f = last_close - 0.5 * atr
+            high_f = last_close + 0.2 * atr
+            low_f = last_close - atr
+        else:
+            close_f = last_close
+            high_f = last_close + 0.3 * atr
+            low_f = last_close - 0.3 * atr
 
-    sr_levels = np.asarray(daily.get("support_resistance", {}).get("levels", []), dtype=float)
-    sr_bias = 0.0
-    if sr_levels.size:
-        above = np.sum(last_close > sr_levels)
-        below = np.sum(last_close < sr_levels)
-        sr_bias = (above - below) / max(1, above + below)
+        conf = 0.0 if atr == 0 else min(1.0, abs(delta) / atr)
+        if trend == "SIDEWAYS":
+            conf *= 0.2
 
-    patterns = _patterns_from_finnhub(daily.get("patterns", []))
-    reliab = get_pattern_reliability()
-    log_odds = 0.0
-    now_dt = pd.to_datetime(df_d["Date"].iloc[-1])
-    for p in patterns:
-        base_p = max(0.01, min(0.99, reliab.get(p["pattern"], 0.55)))
-        age_d = max((now_dt - pd.to_datetime(p["end_date"])).days, 0)
-        decay = math.exp(-age_d / 15)
-        contrib = (
-            math.log(base_p / (1 - base_p)) * (p.get("value", 50) / 100) * decay
-        )
-        log_odds += contrib if p["direction"] == "bullish" else -contrib
+        return {
+            "open": last_close,
+            "high": high_f,
+            "low": low_f,
+            "close": close_f,
+            "confidence": float(round(conf, 3)),
+            "trend": trend,
+        }
 
-    prob_pattern = 1 / (1 + math.exp(-log_odds))
-
-    indicator_score = (
-        0.3 * ((rsi_val - 50) / 50)
-        + 0.3 * np.tanh(macd_diff * 5)
-        + 0.2 * ma_bias
-        + 0.1 * sentiment
-        + 0.1 * sr_bias
-        + 0.1 * np.tanh(premarket_gap * 15)
-    )
-    prob_up = float(np.clip(0.5 + indicator_score / 2, 0, 1))
-    prob_up = 0.6 * prob_up + 0.4 * prob_pattern
-
-    direction = "bullish" if prob_up > 0.55 else "bearish" if prob_up < 0.45 else "neutral"
-    confidence = float(min(1.0, abs(prob_up - 0.5) * 2.5))
-    drift = (prob_up - 0.5) * atr * 0.5
-
-    close_t = last_close + drift
-    vol_ratio = atr / last_close if last_close else 0.0
-    if vol_ratio < 0.01:
-        hi_mult, lo_mult = 0.35, 0.45
-    elif vol_ratio < 0.02:
-        hi_mult, lo_mult = 0.45, 0.55
-    else:
-        hi_mult, lo_mult = 0.60, 0.75
-    high_t = close_t + atr * hi_mult
-    low_t = close_t - atr * lo_mult
-
-    symbol = daily.get("symbol", "")
-    try:
-        st = yf.Ticker(symbol)
-        exp = st.options[0]
-        call, put = st.option_chain(exp)[:2]
-        iv_move = (call.lastPrice + put.lastPrice) / last_close
-        cap = iv_move * 1.5
-        high_t = min(high_t, last_close + cap * last_close)
-        low_t = max(low_t, last_close - cap * last_close)
-    except Exception:
-        cap = 0.0
-
-    logger.debug(
-        "premkt_gap=%0.3f  ATR=%0.2f  iv_cap=%0.2f  hi_mult=%0.2f",
-        premarket_gap,
-        atr,
-        cap,
-        hi_mult,
-    )
-    high_t = max(high_t, open_t, close_t)
-    low_t = min(low_t, open_t, close_t)
-
-    forecast = {
-        "direction": direction,
-        "prob_up": round(float(np.nan_to_num(prob_up)), 3),
-        "confidence": round(float(np.nan_to_num(confidence)), 3),
-        "O": round(float(np.nan_to_num(open_t)), 2),
-        "H": round(float(np.nan_to_num(high_t)), 2),
-        "L": round(float(np.nan_to_num(low_t)), 2),
-        "C": round(float(np.nan_to_num(close_t)), 2),
+    tf_data = {
+        "1min": _extract(payload.get("fintech_minutes")),
+        "1h": _extract(payload.get("fintech_hourly")),
+        "1d": _extract(payload.get("fintech_daily")),
+        "1w": _extract(payload.get("fintech_weekly")),
     }
 
-    # --- Intraday refinement -------------------------------------------------
-    hourly = payload.get("fintech_hourly")
-    if hourly and "candles" in hourly:
-        df_h = _df_from_finnhub_candles(hourly["candles"])
-        last_close_h = df_h["Close"].iloc[-1]
+    forecasts: Dict[str, Dict[str, float]] = {}
+    for tf, series in tf_data.items():
+        if series is None:
+            continue
+        h, l, c = series
+        if len(c) < 2:
+            continue
+        forecasts[tf] = _mini_forecast(h, l, c)
 
-        tr_h = np.maximum(
-            df_h["High"] - df_h["Low"],
-            np.maximum(
-                (df_h["High"] - df_h["Close"].shift()).abs(),
-                (df_h["Low"] - df_h["Close"].shift()).abs(),
-            ),
-        )
-        atr_h = tr_h.ewm(alpha=1 / 14, adjust=False).mean().iloc[-1]
-        ret_h = df_h["Close"].pct_change().iloc[-1]
+    if not forecasts:
+        raise ValueError("No candle data available for forecasting")
 
-        pat_h = _patterns_from_finnhub(hourly.get("patterns", []))
-        log_odds_h = 0.0
-        for p in pat_h:
-            base_p = max(0.01, min(0.99, reliab.get(p["pattern"], 0.55)))
-            contrib = math.log(base_p / (1 - base_p)) * (p.get("value", 50) / 100)
-            log_odds_h += contrib if p["direction"] == "bullish" else -contrib
-        prob_pat_h = 1 / (1 + math.exp(-log_odds_h)) if pat_h else 0.5
+    total_weight = sum(f["confidence"] for f in forecasts.values())
+    if total_weight <= 0:
+        total_weight = float(len(forecasts))
 
-        sr_h = np.asarray(hourly.get("support_resistance", {}).get("levels", []), dtype=float)
-        sr_bias_h = 0.0
-        if sr_h.size:
-            above = np.sum(last_close_h > sr_h)
-            below = np.sum(last_close_h < sr_h)
-            sr_bias_h = (above - below) / max(1, above + below)
+    def _wavg(key: str) -> float:
+        return sum(f[key] * f["confidence"] for f in forecasts.values()) / total_weight
 
-        agg_h = hourly.get("aggregate_indicator", {})
-        cnt_h = agg_h.get("technicalAnalysis", {}).get("count", {})
-        sent_h = (cnt_h.get("buy", 0) - cnt_h.get("sell", 0)) / max(1, sum(cnt_h.values()))
+    final_open = _wavg("open")
+    final_close = _wavg("close")
+    final_high = _wavg("high")
+    final_low = _wavg("low")
 
-        rsi_h = float(_rsi(df_h["Close"]).iloc[-1])
-        macd_h, macd_sig_h, _ = _macd(df_h["Close"])
-        macd_diff_h = float(macd_h.iloc[-1] - macd_sig_h.iloc[-1])
+    final_high = max(final_high, final_open, final_close)
+    final_low = min(final_low, final_open, final_close)
 
-        ind_adj = (
-            0.3 * ((rsi_h - 50) / 50)
-            + 0.3 * np.tanh(macd_diff_h * 5)
-            + 0.2 * sent_h
-            + 0.2 * sr_bias_h
-        )
-        prob_hour = float(np.clip(0.5 + ind_adj / 2, 0, 1))
-
-        prob_up = (prob_up * 0.7 + prob_hour * 0.2 + prob_pat_h * 0.1)
-        confidence = float(min(1.0, abs(prob_up - 0.5) * 2.5))
-        direction = "bullish" if prob_up > 0.55 else "bearish" if prob_up < 0.45 else "neutral"
-
-        drift_h = ret_h * last_close_h
-        close_t = last_close_h + 0.7 * drift + 0.3 * drift_h
-        vol_ratio = atr / last_close if last_close else 0.0
-        if vol_ratio < 0.01:
-            hi_mult, lo_mult = 0.35, 0.45
-        elif vol_ratio < 0.02:
-            hi_mult, lo_mult = 0.45, 0.55
-        else:
-            hi_mult, lo_mult = 0.60, 0.75
-        high_t = close_t + atr * hi_mult
-        low_t = close_t - atr * lo_mult
-        open_t = last_close_h * 0.3 + pre_open * 0.7
-        high_t = max(high_t, open_t, close_t)
-        low_t = min(low_t, open_t, close_t)
-
-        forecast.update(
-            {
-                "direction": direction,
-                "prob_up": round(float(np.nan_to_num(prob_up)), 3),
-                "confidence": round(float(np.nan_to_num(confidence)), 3),
-                "O": round(float(np.nan_to_num(open_t)), 2),
-                "H": round(float(np.nan_to_num(high_t)), 2),
-                "L": round(float(np.nan_to_num(low_t)), 2),
-                "C": round(float(np.nan_to_num(close_t)), 2),
-            }
-        )
-
-    return forecast
+    return {
+        "timeframe": "multi",
+        "open": round(final_open, 2),
+        "high": round(final_high, 2),
+        "low": round(final_low, 2),
+        "close": round(final_close, 2),
+        "confidence_scores": {tf: f["confidence"] for tf, f in forecasts.items()},
+        "component_forecasts": forecasts,
+    }
 
 
 if __name__ == "__main__":
