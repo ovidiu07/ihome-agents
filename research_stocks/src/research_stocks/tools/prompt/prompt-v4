@@ -96,8 +96,11 @@ enhanced = o3_chat(
 ## Prompt to O3 (copy from here)
 
 ```text
-Please enhance the forecast using the multi‑timeframe technical JSON provided in the variable `data` following all instructions above.  Output Section 1 then Section 2 exactly as specified.
-```
 
-Below is the JSON input ↴
+```
+PROMPT
+
+
+Please enhance the forecast using the multi‑timeframe technical JSON provided in the variable `data` following all instructions.  Output Section 1 then Section 2 exactly as specified.
+Below is the JSON input:
 

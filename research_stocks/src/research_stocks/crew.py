@@ -729,20 +729,24 @@ class StockAnalysisCrew:
 
     try:
       # Fetch all Finnhub data for this symbol
+      fintech_one_minute = fetch_all(symbol, resolution="1", lookback_days=1,
+                                  save_path="output")
+      fintech_fifteen_minutes = fetch_all(symbol, resolution="15", lookback_days=1,
+                                     save_path="output")
+      fintech_hourly = fetch_all(symbol, resolution="60", lookback_days=3,
+                                 save_path="output")
       fintech_daily = fetch_all(symbol, resolution="D", lookback_days=14,
                                save_path="output")
-      fintech_hourly = fetch_all(symbol, resolution="60", lookback_days=3,
-                                save_path="output")
       fintech_weekly = fetch_all(symbol, resolution="W", lookback_days=14,
                                 save_path="output")
-      fintech_minutes = fetch_all(symbol, resolution="1", lookback_days=1,
-                                  save_path="output")
+
     except Exception as e:
       logging.warning("Failed to fetch fintech data: %s", e)
       fintech_daily = None
       fintech_hourly = None
-      fintech_minutes = None
+      fintech_one_minute = None
       fintech_weekly = None
+      fintech_fifteen_minutes = None
 
     if fintech_daily:
       results_path = Path("output") / f"pattern_analysis_results_{symbol}.json"
@@ -758,8 +762,11 @@ class StockAnalysisCrew:
           fintech_hourly.read_text(encoding="utf-8"))
       results["fintech_hourly"] = fintech_data_hourly
 
-      fintech_data_minutes = json.loads(fintech_minutes.read_text(encoding="utf-8"))
-      results["fintech_minutes"] = fintech_data_minutes
+      fintech_data_one_minute = json.loads(fintech_one_minute.read_text(encoding="utf-8"))
+      results["fintech_one_minute"] = fintech_data_one_minute
+
+      fintech_data_fifteen_minutes = json.loads(fintech_fifteen_minutes.read_text(encoding="utf-8"))
+      results["fintech_fifteen_minutes"] = fintech_data_fifteen_minutes
 
       fintech_data_weekly = json.loads(fintech_weekly.read_text(encoding="utf-8"))
       results["fintech_weekly"] = fintech_data_weekly

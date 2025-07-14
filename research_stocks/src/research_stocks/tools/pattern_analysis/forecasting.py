@@ -321,99 +321,6 @@ class _OHLCForecaster:
         return predictions[0] if days == 1 else predictions
 
 
-def build_feature_stack(
-    df_hist: pd.DataFrame,
-    df_today_min: Optional[pd.DataFrame],
-    daily_patterns: List[Dict],
-    intraday_patterns: List[Dict],
-    vwap_trend: str,
-    morning_cutoff: str = "10:30",
-) -> Dict[str, Any]:
-    """
-    Build a feature stack for forecasting.
-
-    Args:
-        df_hist: DataFrame with historical daily OHLC data
-        df_today_min: DataFrame with today's intraday OHLC data (can be None)
-        daily_patterns: List of daily pattern dictionaries
-        intraday_patterns: List of intraday pattern dictionaries
-        vwap_trend: VWAP trend direction ("UP" or "DOWN")
-        morning_cutoff: Time cutoff for morning session
-
-    Returns:
-        Dictionary with features for forecasting
-    """
-    features = {}
-
-    # Helper function to calculate bias score from patterns
-    def _bias_score(patts: List[Dict]) -> float:
-        if not patts:
-            return 0.0
-
-        bullish = sum(1 for p in patts if p["direction"] == "bullish")
-        bearish = sum(1 for p in patts if p["direction"] == "bearish")
-
-        if bullish == bearish:
-            return 0.0
-
-        # Calculate normalized score between -1 and 1
-        total = bullish + bearish
-        return (bullish - bearish) / total
-
-    # Historical features
-    if not df_hist.empty:
-        # Price momentum
-        features["price_momentum"] = df_hist["Close"].pct_change(5).iloc[-1]
-
-        # Volatility
-        features["volatility"] = (
-            df_hist["High"]
-            .sub(df_hist["Low"])
-            .div(df_hist["Close"])
-            .rolling(10, min_periods=1)
-            .mean()
-            .iloc[-1]
-        )
-
-        # Daily pattern bias
-        features["daily_pattern_bias"] = _bias_score(daily_patterns)
-
-        # Recent performance
-        features["week_return"] = df_hist["Close"].pct_change(5).iloc[-1]
-        features["month_return"] = df_hist["Close"].pct_change(20).iloc[-1]
-
-    # Intraday features
-    if df_today_min is not None and not df_today_min.empty:
-        # Morning vs. full day performance
-        morning_data = df_today_min[
-            df_today_min["Date"].str.contains(morning_cutoff, regex=False)
-        ]
-
-        if not morning_data.empty:
-            morning_open = morning_data.iloc[0]["Open"]
-            morning_close = morning_data.iloc[-1]["Close"]
-            features["morning_return"] = (morning_close / morning_open) - 1
-
-        # Intraday pattern bias
-        features["intraday_pattern_bias"] = _bias_score(intraday_patterns)
-
-        # Intraday volatility
-        features["intraday_volatility"] = (
-            df_today_min["High"].max() / df_today_min["Low"].min() - 1
-        )
-
-        # VWAP trend
-        features["vwap_trend"] = 1 if vwap_trend == "UP" else -1
-
-    # Combined features
-    features["combined_bias"] = (
-        features.get("daily_pattern_bias", 0) * 0.6
-        + features.get("intraday_pattern_bias", 0) * 0.4
-    )
-
-    return features
-
-
 @functools.lru_cache(maxsize=1)
 def _load_pattern_stats() -> pd.DataFrame:
     """
@@ -761,7 +668,8 @@ def next_prediction_from_finnhub(payload: Dict[str, Any]) -> Dict[str, Any]:
         if not data or "candles" not in data:
             return None
         cdl = data["candles"]
-        return cdl.get("h", []), cdl.get("l", []), cdl.get("c", [])
+        patterns = _patterns_from_finnhub(data.get("patterns", []))   # ← NEW
+        return cdl.get("h", []), cdl.get("l", []), cdl.get("c", []), patterns
 
     def _atr(high: List[float], low: List[float], close: List[float], window: int = 14) -> float:
         if len(close) < 2:
@@ -774,7 +682,7 @@ def next_prediction_from_finnhub(payload: Dict[str, Any]) -> Dict[str, Any]:
             return float(np.mean(tr))
         return float(np.mean(tr[-window:]))
 
-    def _mini_forecast(high: List[float], low: List[float], close: List[float]) -> Dict[str, float]:
+    def _mini_forecast(high: List[float], low: List[float], close: List[float], patterns: List[Dict[str, Any]] | None = None) -> Dict[str, float]:
         n = len(close)
         if n < 2:
             return {}
@@ -820,7 +728,8 @@ def next_prediction_from_finnhub(payload: Dict[str, Any]) -> Dict[str, Any]:
         }
 
     tf_data = {
-        "1min": _extract(payload.get("fintech_minutes")),
+        "1min": _extract(payload.get("fintech_one_minute")),
+        "15min": _extract(payload.get("fintech_fifteen_minutes")),
         "1h": _extract(payload.get("fintech_hourly")),
         "1d": _extract(payload.get("fintech_daily")),
         "1w": _extract(payload.get("fintech_weekly")),
@@ -830,10 +739,10 @@ def next_prediction_from_finnhub(payload: Dict[str, Any]) -> Dict[str, Any]:
     for tf, series in tf_data.items():
         if series is None:
             continue
-        h, l, c = series
+        h, l, c, patts = series
         if len(c) < 2:
             continue
-        forecasts[tf] = _mini_forecast(h, l, c)
+        forecasts[tf] = _mini_forecast(h, l, c, patts)
 
     if not forecasts:
         raise ValueError("No candle data available for forecasting")

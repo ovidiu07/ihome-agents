@@ -115,7 +115,7 @@ def _call_finnhub(
   delay = 1.0
   for attempt in range(1, MAX_RETRIES + 1):
     try:
-      resp = sess.get(url, params=params, timeout=10)
+      resp = sess.get(url, params=params, timeout=20)
       if resp.status_code >= 400:
         raise requests.HTTPError(f"{resp.status_code} error: {resp.text}", response=resp)
       data = resp.json()
