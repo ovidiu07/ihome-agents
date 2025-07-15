@@ -14,40 +14,80 @@ A single JSON object **named `data`** with this structure (keys are constant, va
 ```jsonc
 {
   "symbol": "TICKER",
-  "fintech_daily":      { /* candles, patterns, s/r, indicators */ },
-  "fintech_hourly":     { ... },
-  "fintech_minutes":    { ... },      // minute or sub‑hourly data
-  "fintech_weekly":     { ... },
+  "fintech_daily": {
+    "symbol": "TICKER",
+    "resolution": "D",
+    "last_updated_utc": "YYYY-MM-DDTHH:MM:SSZ",
+    "candles": { "o": [...], "h": [...], "l": [...], "c": [...], "v": [...], "t": [...] },
+    "patterns": [
+      {
+        "name": "PatternName",
+        "aprice": <float>,
+        "atime": <timestamp>,
+        "bprice": <float>,
+        "btime": <timestamp>,
+        "confidence": <float>
+      }
+    ],
+    "support_resistance": { "levels": [<float>, ...] },
+    "aggregate_indicator": {
+      "trend": { "adx": <float>, "trending": <boolean> },
+      "technicalAnalysis": { "count": { "buy": <int>, "neutral": <int>, "sell": <int> }, "signal": "<string>" }
+    },
+    "technical_indicators": { "ohlc": { "o": [...], "h": [...], "l": [...], "c": [...] }, "rsi": [...], "macd": { "macd": [...], "signal": [...], "histogram": [...] } }
+  },
+  "fintech_hourly":    { /* same structure as fintech_daily, resolution \"60\", etc. */ },
+  "fintech_one_minute":     { /* same structure as fintech_daily, resolution \"1\", etc. */ },
+  "fintech_five_minutes":   { /* same structure as fintech_daily, resolution \"5\", etc. */ },
+  "fintech_fifteen_minutes":{ /* same structure as fintech_daily, resolution \"15\", etc. */ },
+  "fintech_weekly":   { /* same structure as fintech_daily, resolution \"W\", etc. */ },
   "next_prediction_from_finnhub": {
-      // pre‑computed OHLC per timeframe + confidence + trend
+    "daily":    { "open": <float>, "high": <float>, "low": <float>, "close": <float>, "confidence": <float>, "trend": "<string>" },
+    "hourly":   { /* ... */ },
+    "1m":       { /* ... */ },
+    "5m":       { /* ... */ },
+    "15m":      { /* ... */ },
+    "weekly":   { /* ... */ },
+    "component_forecasts": {
+      "daily": { "open": <float>, "high": <float>, "low": <float>, "close": <float>, "confidence": <float> },
+      "hourly": { /* ... */ },
+      "1m":     { /* ... */ },
+      "5m":     { /* ... */ },
+      "15m":    { /* ... */ },
+      "weekly": { /* ... */ }
+    }
   }
 }
 ```
 
 Each `fintech_*` block contains:
 
-* `candles`: arrays `o, h, l, c, v, t`
-* `patterns`: recognised chart patterns with metadata
-* `support_resistance.levels`: numeric prices
-* `aggregate_indicator`:
-  * `trend.adx` and `trend.trending`
-  * `technicalAnalysis.count` (buy/neutral/sell) and `signal`
-* `technical_indicators`: raw OHLC arrays plus optional RSI, MACD etc.
+  * `symbol`: ticker string repeated in the block
+  * `resolution`: timeframe code (e.g. "D", "60", "1", "5", "15", "W")
+  * `last_updated_utc`: ISO 8601 timestamp
+  * `candles`: arrays `o, h, l, c, v, t`
+  * `patterns`: recognised chart patterns with full internals (`name`, `aprice`, `atime`, `bprice`, `btime`, `confidence`)
+  * `support_resistance.levels`: numeric price levels
+  * `aggregate_indicator`:
+    - `trend.adx` and `trend.trending`
+    - `technicalAnalysis.count` (buy/neutral/sell) and `signal`
+  * `technical_indicators`: raw OHLC arrays plus optional indicators (RSI, MACD, etc.)
 
 ---
 
 ## Your tasks
 
-1. **Parse** the `data` object and identify the most recent candles, patterns, and levels on **each timeframe** (minutes, hourly, daily, weekly).
-2. **Evaluate** the pre‑computed `next_prediction_from_finnhub` block.
-   *If* other technical signals disagree, **refine / adjust** those OHLC numbers to produce a more realistic forecast.
-3. **Generate one enhanced OHLC forecast** for
-   * `daily_forecast` → the *current trading day’s* expected bar
-   * `weekly_forecast` → the *ongoing calendar week’s* expected bar
-4. Use ATR / recent volatility, confirmed patterns, and support‑resistance shelves to bound High/Low and bias Close.
-   * Weight inputs by the provided `confidence_scores`.
-   * Give higher weight to a timeframe when its confidence is high **and** its indicators confirm the move.
-5. **Output format – EXACTLY TWO SECTIONS**:
+1. **Parse** the `data` object and identify the most recent candles, patterns (including full internals), and support/resistance levels on each timeframe (fintech_one_minute, fintech_five_minutes, fintech_fifteen_minutes, hourly, daily, weekly).
+2. **Compute** historical performance for each chart pattern: calculate the win rate of each pattern over the past N occurrences per timeframe and derive confidence-adjusted weights.
+3. **Detect** technical divergences: scan RSI and MACD versus price on hourly and daily timeframes to flag regular or hidden divergences, then adjust forecast bounds toward support/resistance if divergences are present.
+4. **Classify** volatility regimes: compute the ratio of 14-period ATR to 50-period ATR on each timeframe; label regimes as low, normal, or high volatility and expand/contract forecast ranges accordingly.
+5. **Evaluate** the `next_prediction_from_finnhub` block (including `component_forecasts`); if signals diverge, refine those OHLC values by weighting across timeframes using confidence scores, pattern performance weights, divergence flags, and correcting for historical forecast bias.
+6. **Generate** one enhanced OHLC forecast for
+   * `daily_forecast` → the current trading day’s expected bar
+   * `weekly_forecast` → the ongoing calendar week’s expected bar
+7. **Optimize** stop-loss and profit-target levels by backtesting ATR-based stop/target pairs over the historical dataset and selecting levels that maximize reward-to-risk.
+8. **[Optional] Ensemble** indicator signals: treat each major indicator signal (e.g., MA crossovers, Bollinger squeezes, ADX thresholds) as votes and compute a consensus directional probability to support the forecast.
+9. **Output format – EXACTLY TWO SECTIONS**:
 
 ### **SECTION 1 — concise output (no extra text)**
 Return *only* a JSON object, no commentary:
