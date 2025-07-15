@@ -653,19 +653,33 @@ def _macd(series: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9) ->
 
 
 # ── data wrangling ───────────────────────────────────────────
-def _df_from_candles(c: dict) -> pd.DataFrame:
-    df = pd.DataFrame(
-        {
-            "ts": pd.to_datetime(c["t"], unit="s", utc=True)
-            if isinstance(c["t"][0], (int, float))
-            else pd.to_datetime(c["t"], utc=True),
-            "open": c["o"],
-            "high": c["h"],
-            "low": c["l"],
-            "close": c["c"],
-            "vol": c["v"],
-        }
-    )
+def _df_from_candles(cblk: dict[str, list]) -> pd.DataFrame:
+    """
+    Convert Finnhub `candles` block to an OHLCV DataFrame
+    with strict length-equality validation.
+    """
+    required = ("o", "h", "l", "c", "v", "t")
+    if any(k not in cblk for k in required):
+        raise ValueError("candles block missing one of o/h/l/c/v/t")
+
+    # --- length sanity -------------------------------------------------
+    # --- establish common length --------------------------------------
+    lengths = {len(cblk[k]) for k in required}
+    if len(lengths) == 1:
+        min_len = lengths.pop()              # all equal ⇒ take that length
+    else:
+        min_len = min(lengths)               # trim to the shortest vector
+        for k in required:
+            cblk[k] = cblk[k][:min_len]
+
+    df = pd.DataFrame({
+        "ts": pd.to_datetime(cblk["t"][:min_len], unit="s", utc=True),
+        "open":  cblk["o"][:min_len],
+        "high":  cblk["h"][:min_len],
+        "low":   cblk["l"][:min_len],
+        "close": cblk["c"][:min_len],
+        "vol":   cblk["v"][:min_len],
+    })
     return df.set_index("ts")
 
 

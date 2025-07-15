@@ -731,6 +731,8 @@ class StockAnalysisCrew:
       # Fetch all Finnhub data for this symbol
       fintech_one_minute = fetch_all(symbol, resolution="1", lookback_days=1,
                                   save_path="output")
+      fintech_five_minutes = fetch_all(symbol, resolution="5", lookback_days=1,
+                                     save_path="output")
       fintech_fifteen_minutes = fetch_all(symbol, resolution="15", lookback_days=1,
                                      save_path="output")
       fintech_hourly = fetch_all(symbol, resolution="60", lookback_days=3,
@@ -745,6 +747,7 @@ class StockAnalysisCrew:
       fintech_daily = None
       fintech_hourly = None
       fintech_one_minute = None
+      fintech_five_minutes = None
       fintech_weekly = None
       fintech_fifteen_minutes = None
 
@@ -764,6 +767,9 @@ class StockAnalysisCrew:
 
       fintech_data_one_minute = json.loads(fintech_one_minute.read_text(encoding="utf-8"))
       results["fintech_one_minute"] = fintech_data_one_minute
+
+      fintech_data_five_minutes = json.loads(fintech_five_minutes.read_text(encoding="utf-8"))
+      results["fintech_five_minutes"] = fintech_data_five_minutes
 
       fintech_data_fifteen_minutes = json.loads(fintech_fifteen_minutes.read_text(encoding="utf-8"))
       results["fintech_fifteen_minutes"] = fintech_data_fifteen_minutes
