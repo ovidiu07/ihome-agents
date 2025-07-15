@@ -4,11 +4,10 @@ import functools
 import math
 import os
 import logging
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 import numpy as np
 import pandas as pd
-import yfinance as yf
 
 from .utils import get_pattern_reliability
 
@@ -653,123 +652,180 @@ def _macd(series: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9) ->
     return macd, signal_line, hist
 
 
-def next_prediction_from_finnhub(payload: Dict[str, Any]) -> Dict[str, Any]:
-    """Return a single OHLC forecast by stacking multiple timeframes.
-
-    The payload dictionary should contain 1-minute, 1-hour, 1-day and
-    1-week candle data under the keys ``fintech_minutes``, ``fintech_hourly``,
-    ``fintech_daily`` and ``fintech_weekly`` respectively. Each block follows
-    the structure returned by :func:`fetch_all`, namely ``{"candles": {"o", "h",
-    "l", "c"}}``. The function computes a small forecast for each timeframe
-    using ATR driven rules and blends them weighted by confidence.
-    """
-
-    def _extract(data: Dict[str, Any]) -> Optional[Tuple[List[float], List[float], List[float]]]:
-        if not data or "candles" not in data:
-            return None
-        cdl = data["candles"]
-        patterns = _patterns_from_finnhub(data.get("patterns", []))   # ← NEW
-        return cdl.get("h", []), cdl.get("l", []), cdl.get("c", []), patterns
-
-    def _atr(high: List[float], low: List[float], close: List[float], window: int = 14) -> float:
-        if len(close) < 2:
-            return 0.0
-        prev_close = np.concatenate([[close[0]], close[:-1]])
-        tr = np.maximum(np.array(high) - np.array(low),
-                        np.maximum(np.abs(np.array(high) - prev_close),
-                                   np.abs(np.array(low) - prev_close)))
-        if len(tr) < window:
-            return float(np.mean(tr))
-        return float(np.mean(tr[-window:]))
-
-    def _mini_forecast(high: List[float], low: List[float], close: List[float], patterns: List[Dict[str, Any]] | None = None) -> Dict[str, float]:
-        n = len(close)
-        if n < 2:
-            return {}
-        atr = _atr(high, low, close)
-        last_close = close[-1]
-        ref_close = close[-10] if n > 10 else close[0]
-        delta = last_close - ref_close
-
-        if atr > 0 and delta > atr:
-            trend = "UP"
-        elif atr > 0 and delta < -atr:
-            trend = "DOWN"
-        else:
-            trend = "SIDEWAYS"
-
-        if atr == 0:
-            atr = last_close * 0.001
-
-        if trend == "UP":
-            close_f = last_close + 0.5 * atr
-            high_f = last_close + atr
-            low_f = last_close - 0.2 * atr
-        elif trend == "DOWN":
-            close_f = last_close - 0.5 * atr
-            high_f = last_close + 0.2 * atr
-            low_f = last_close - atr
-        else:
-            close_f = last_close
-            high_f = last_close + 0.3 * atr
-            low_f = last_close - 0.3 * atr
-
-        conf = 0.0 if atr == 0 else min(1.0, abs(delta) / atr)
-        if trend == "SIDEWAYS":
-            conf *= 0.2
-
-        return {
-            "open": last_close,
-            "high": high_f,
-            "low": low_f,
-            "close": close_f,
-            "confidence": float(round(conf, 3)),
-            "trend": trend,
+# ── data wrangling ───────────────────────────────────────────
+def _df_from_candles(c: dict) -> pd.DataFrame:
+    df = pd.DataFrame(
+        {
+            "ts": pd.to_datetime(c["t"], unit="s", utc=True)
+            if isinstance(c["t"][0], (int, float))
+            else pd.to_datetime(c["t"], utc=True),
+            "open": c["o"],
+            "high": c["h"],
+            "low": c["l"],
+            "close": c["c"],
+            "vol": c["v"],
         }
+    )
+    return df.set_index("ts")
 
-    tf_data = {
-        "1min": _extract(payload.get("fintech_one_minute")),
-        "15min": _extract(payload.get("fintech_fifteen_minutes")),
-        "1h": _extract(payload.get("fintech_hourly")),
-        "1d": _extract(payload.get("fintech_daily")),
-        "1w": _extract(payload.get("fintech_weekly")),
+
+# ── price & volatility ───────────────────────────────────────
+def atr(df: pd.DataFrame, n: int = 14) -> float:
+    tr = np.maximum(
+        df.high - df.low,
+        np.maximum((df.high - df.close.shift()).abs(), (df.low - df.close.shift()).abs()),
+    )
+    return tr.rolling(n, min_periods=1).mean().iloc[-1]  # formula per TA-Lib ATR (Wilder smoothing)
+
+
+def hlc3_slope(df: pd.DataFrame, w: int = 20) -> float:
+    hlc3 = (df.high + df.low + df.close) / 3
+    y, x = hlc3.tail(w), np.arange(w)
+    a, _ = np.polyfit(x, y, 1)
+    return np.degrees(np.arctan(a / y.mean()))
+
+
+# ── volume & liquidity ───────────────────────────────────────
+def obv_trend(df: pd.DataFrame, n: int = 30) -> float:
+    dir_ = np.sign(df.close.diff())
+    obv = (dir_ * df.vol).cumsum()
+    return (obv.iloc[-1] - obv.iloc[-n]) / max(1, abs(obv.iloc[-n]))
+
+
+def vol_spike(df: pd.DataFrame, span: int = 20) -> float:
+    ew = df.vol.ewm(span=span).mean()
+    return (df.vol.iloc[-1] - ew.iloc[-1]) / df.vol.std()
+
+
+# ── patterns ─────────────────────────────────────────────────
+def _bias_score(pats: list[dict]) -> float:
+    if not pats:
+        return 0.0
+    score = 0.0
+    tot = 0.0
+    for p in pats:
+        val = float(p.get("value", 1.0))
+        sign = 1.0 if p.get("direction") == "bullish" else -1.0 if p.get("direction") == "bearish" else 0.0
+        score += sign * val
+        tot += abs(val)
+    return score / tot if tot else 0.0
+
+
+def _pattern_bias_with_status(pats: list[dict]) -> float:
+    base = _bias_score(pats)
+    return base * 0.6 ** sum(p.get("status") in {"failed", "incomplete"} for p in pats)
+
+
+# ── support / resistance ─────────────────────────────────────
+def sr_proximity(levels: list[float], price: float) -> float:
+    if not levels:
+        return 0.0
+    nearest = min(levels, key=lambda x: abs(x - price))
+    if abs((price - nearest) / price) > 0.01:
+        return 0.0
+    return 1.0 if price > nearest else -1.0
+
+
+# ── gap statistics ───────────────────────────────────────────
+def gap_stat(df: pd.DataFrame, lookback: int = 60) -> float:
+    g = np.log(df.open / df.close.shift()).dropna().tail(lookback)
+    return g.mean() / g.std(ddof=0)
+
+
+# ── cross-time-frame alignment ───────────────────────────────
+def alignment_score(trends: dict[str, str]) -> float:
+    vote = sum(1 if t == "UP" else -1 if t == "DOWN" else 0 for t in trends.values())
+    return vote / len(trends)
+
+
+# ── feature stack builder ────────────────────────────────────
+def build_feature_dict(p: dict) -> dict:
+    feats: dict[str, dict] = {}
+    for k, b in p.items():
+        if not k.startswith("fintech_"):
+            continue
+        tf = b["resolution"]
+        df = _df_from_candles(b["candles"])
+        feats[tf] = {
+            "atr": atr(df),
+            "slope": hlc3_slope(df),
+            "obv_trend": obv_trend(df),
+            "vol_spike": vol_spike(df),
+            "gap_z": gap_stat(df),
+            "pattern_bias": _pattern_bias_with_status(b.get("patterns", [])),
+            "sr_prox": sr_proximity(b.get("support_resistance", {}).get("levels", []), df.close.iloc[-1]),
+        }
+    comp = p.get("next_prediction_from_finnhub", {}).get("component_forecasts", {})
+    trends = {tf: comp.get(alias, {}).get("trend", "SIDEWAYS") for tf, alias in zip(feats, ["1min", "15min", "1h", "1d", "1w"])}
+    feats["alignment"] = alignment_score(trends)
+    return feats
+
+
+# ── probabilistic blender ────────────────────────────────────
+def probability_blender(f: dict) -> float:
+    p = 0.5
+    w = {
+        "slope": 0.15,
+        "obv_trend": 0.10,
+        "vol_spike": 0.05,
+        "pattern_bias": 0.25,
+        "sr_prox": 0.05,
+        "gap_z": 0.05,
+        "alignment": 0.35,
     }
-
-    forecasts: Dict[str, Dict[str, float]] = {}
-    for tf, series in tf_data.items():
-        if series is None:
+    for tf, d in f.items():
+        if tf == "alignment":
+            p += w["alignment"] * np.tanh(d)
             continue
-        h, l, c, patts = series
-        if len(c) < 2:
-            continue
-        forecasts[tf] = _mini_forecast(h, l, c, patts)
+        p += w["slope"] * np.tanh(d["slope"] / 10)
+        p += w["obv_trend"] * d["obv_trend"]
+        p += w["vol_spike"] * np.tanh(d["vol_spike"] / 3)
+        p += w["pattern_bias"] * d["pattern_bias"]
+        p += w["sr_prox"] * d["sr_prox"] * 0.1
+        p += w["gap_z"] * np.tanh(d["gap_z"] / 3) * 0.1
+    return float(np.clip(p, 0, 1))
 
+
+def next_prediction_from_finnhub(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a single OHLC forecast by stacking multiple timeframes."""
+
+    # 1 build features
+    feats = build_feature_dict(payload)
+    payload["feature_stack"] = feats
+
+    # 2 probability
+    prob_up = probability_blender(feats)
+
+    # 3 choose ATR source
+    comp = payload.get("next_prediction_from_finnhub", {}).get("component_forecasts", {})
+    best_tf = max(comp, key=lambda k: comp[k]["confidence"]) if comp else "1d"
+    tf_map = {"1min": "1", "15min": "15", "1h": "60", "1d": "D", "1w": "W"}
+    _atr_val = feats.get(tf_map.get(best_tf, "D"), {}).get("atr", 0)
+
+    # 4 size existing OHLC (previous logic)
+    forecasts = comp
     if not forecasts:
         raise ValueError("No candle data available for forecasting")
 
-    total_weight = sum(f["confidence"] for f in forecasts.values())
-    if total_weight <= 0:
-        total_weight = float(len(forecasts))
+    total_weight = sum(f["confidence"] for f in forecasts.values()) or float(len(forecasts))
 
     def _wavg(key: str) -> float:
         return sum(f[key] * f["confidence"] for f in forecasts.values()) / total_weight
 
-    final_open = _wavg("open")
-    final_close = _wavg("close")
-    final_high = _wavg("high")
-    final_low = _wavg("low")
-
-    final_high = max(final_high, final_open, final_close)
-    final_low = min(final_low, final_open, final_close)
+    open_ = _wavg("open")
+    close_ = _wavg("close")
+    high_ = max(_wavg("high"), open_, close_)
+    low_ = min(_wavg("low"), open_, close_)
 
     return {
-        "timeframe": "multi",
-        "open": round(final_open, 2),
-        "high": round(final_high, 2),
-        "low": round(final_low, 2),
-        "close": round(final_close, 2),
-        "confidence_scores": {tf: f["confidence"] for tf, f in forecasts.items()},
-        "component_forecasts": forecasts,
+        "direction": "UP" if prob_up >= 0.5 else "DOWN",
+        "prob_up": prob_up,
+        "confidence": comp.get(best_tf, {}).get("confidence", 1.0),
+        "open": round(open_, 2),
+        "high": round(high_, 2),
+        "low": round(low_, 2),
+        "close": round(close_, 2),
+        "feature_stack": feats,
     }
 
 
