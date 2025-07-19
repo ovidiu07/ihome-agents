@@ -233,28 +233,32 @@ def get_aggregate_indicator(
 
 def get_technical_indicator(
     symbol: str,
-    indicator: str = "rsi",
+    indicator: str,
     resolution: str = "D",
     start: datetime | None = None,
     end: datetime | None = None,
     timeperiod: int = 1,
     session: Optional[requests.Session] = None,
-) -> TechnicalIndicatorResponse:
-  """Return custom technical indicator data for ``symbol``."""
+) -> dict[str, TechnicalIndicatorResponse]:
+  """
+  Return multiple technical indicators for `symbol`. You supply a list,
+  like ["RSI", "MACD", "EMA", ...]. Only one API call per indicator.
+  """
   if start is None:
     start = datetime.utcnow() - timedelta(days=365)
   if end is None:
     end = datetime.utcnow()
-  params = {
-    "symbol":     symbol.upper(),
-    "indicator":  indicator,
-    "resolution": resolution,
-    "from":       int(start.timestamp()),
-    "to":         int(end.timestamp()),
-    "timeperiod": timeperiod,
-  }
-  data = _call_finnhub("/indicator", params, session)
-  return TechnicalIndicatorResponse.model_validate(data)
+    params = {
+      "symbol":     symbol.upper(),
+      "indicator":  indicator,
+      "resolution": resolution,
+      "from":       int(start.timestamp()),
+      "to":         int(end.timestamp()),
+      "timeperiod": timeperiod,
+    }
+    # perform one call per indicator
+    data = _call_finnhub("/indicator", params, session)
+    return TechnicalIndicatorResponse.model_validate(data)
 
 
 def fetch_all(
@@ -267,13 +271,21 @@ def fetch_all(
   """High-level façade to fetch & save all endpoints."""
   end = datetime.utcnow()
   start = end - timedelta(days=lookback_days)
+  indicators = [
+    "SMA","EMA","WMA","DEMA","TEMA","TRIMA","KAMA","MAMA","T3",
+    "MACD","MACDEXT","STOCH","STOCHF","RSI","STOCHRSI","WILLR",
+    "ADX","ADXR","APO","PPO","MOM","BOP","CCI","CMO","ROC","ROCR",
+    "AROON","AROONOSC","MFI","TRIX","ULTOSC","DX","MINUSDI","PLUSDI",
+    "MINUSDM","PLUSDM","BBANDS","MIDPOINT","MIDPRICE","SAR","TRANGE",
+    "ATR","NATR","AD","ADOSC","OBV","HTTRENDLINE","HTSINE",
+    "HTTRENDMODE","HTDCPERIOD","HTDCPHASE","HTPHASOR",
+  ]
+
 
   candles = get_candles(symbol, resolution, start, end, session)
   patterns = get_pattern_recognition(symbol,resolution, session)
   support_resistance = get_support_resistance(symbol,resolution, session)
   aggregate_indicator = get_aggregate_indicator(symbol, resolution, session)
-  technical_indicators = get_technical_indicator(symbol, resolution=resolution,
-                                                 start=start, end=end, session=session)
 
   result = {
     "symbol":                symbol.upper(),
@@ -283,8 +295,10 @@ def fetch_all(
     "patterns":              patterns.dict().get("points", []),
     "support_resistance":    support_resistance.dict(),
     "aggregate_indicator":   aggregate_indicator.dict(),
-    "technical_indicators":  technical_indicators.dict(),
+    # "technical_indicators":  technical_indicators.dict(),
   }
+  for ind in indicators:
+    result[ind] = get_technical_indicator(symbol, [ind], resolution, start, end, session=session).dict()
 
   path = Path(save_path)
   path.mkdir(parents=True, exist_ok=True)
