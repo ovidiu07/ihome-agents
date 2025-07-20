@@ -241,8 +241,8 @@ def get_technical_indicator(
     session: Optional[requests.Session] = None,
 ) -> dict[str, TechnicalIndicatorResponse]:
   """
-  Return multiple technical indicators for `symbol`. You supply a list,
-  like ["RSI", "MACD", "EMA", ...]. Only one API call per indicator.
+  Return a single technical indicator series for ``symbol``.
+  Only one API call is made per indicator name.
   """
   if start is None:
     start = datetime.utcnow() - timedelta(days=365)
@@ -295,10 +295,15 @@ def fetch_all(
     "patterns":              patterns.dict().get("points", []),
     "support_resistance":    support_resistance.dict(),
     "aggregate_indicator":   aggregate_indicator.dict(),
-    # "technical_indicators":  technical_indicators.dict(),
   }
+  technical_indicators: dict[str, Any] = {}
   for ind in indicators:
-    result[ind] = get_technical_indicator(symbol, [ind], resolution, start, end, session=session).dict()
+    ti_data = get_technical_indicator(symbol, ind, resolution, start, end, session=session).dict()
+    # remove OHLCV arrays and status from each indicator response
+    for key in ("o", "h", "l", "c", "v", "t", "s"):
+      ti_data.pop(key, None)
+    technical_indicators[ind] = ti_data
+  result["technical_indicators"] = technical_indicators
 
   path = Path(save_path)
   path.mkdir(parents=True, exist_ok=True)
