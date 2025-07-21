@@ -1,4 +1,4 @@
-# O3 Prompt: Enhanced Multi‑Timeframe Technical Forecast
+<file name=0 path=prompt-v4># O3 Prompt: Enhanced Multi‑Timeframe Technical Forecast
 
 **System role (implicit)**
 You are a professional quantitative *technical* analyst and trader.
@@ -34,7 +34,7 @@ A single JSON object **named `data`** with this structure (keys are constant, va
       "trend": { "adx": <float>, "trending": <boolean> },
       "technicalAnalysis": { "count": { "buy": <int>, "neutral": <int>, "sell": <int> }, "signal": "<string>" }
     },
-    "technical_indicators": { "ohlc": { "o": [...], "h": [...], "l": [...], "c": [...] }, "rsi": [...], "macd": { "macd": [...], "signal": [...], "histogram": [...] } }
+    "technical_indicators": mandatory deep-dive TA metrics
   },
   "fintech_hourly":    { /* same structure as fintech_daily, resolution \"60\", etc. */ },
   "fintech_one_minute":     { /* same structure as fintech_daily, resolution \"1\", etc. */ },
@@ -71,23 +71,24 @@ Each `fintech_*` block contains:
   * `aggregate_indicator`:
     - `trend.adx` and `trend.trending`
     - `technicalAnalysis.count` (buy/neutral/sell) and `signal`
-  * `technical_indicators`: raw OHLC arrays plus optional indicators (RSI, MACD, etc.)
+  * `technical_indicators`: mandatory deep-dive TA metrics. Can include dozens of studies (SMA, EMA, RSI, MACD, BBANDS, AROON, etc.).
 
 ---
 
 ## Your tasks
 
 1. **Parse** the `data` object and identify the most recent candles, patterns (including full internals), and support/resistance levels on each timeframe (fintech_one_minute, fintech_five_minutes, fintech_fifteen_minutes, hourly, daily, weekly).
-2. **Compute** historical performance for each chart pattern: calculate the win rate of each pattern over the past N occurrences per timeframe and derive confidence-adjusted weights.
-3. **Detect** technical divergences: scan RSI and MACD versus price on hourly and daily timeframes to flag regular or hidden divergences, then adjust forecast bounds toward support/resistance if divergences are present.
-4. **Classify** volatility regimes: compute the ratio of 14-period ATR to 50-period ATR on each timeframe; label regimes as low, normal, or high volatility and expand/contract forecast ranges accordingly.
-5. **Evaluate** the `next_prediction_from_finnhub` block (including `component_forecasts`); if signals diverge, refine those OHLC values by weighting across timeframes using confidence scores, pattern performance weights, divergence flags, and correcting for historical forecast bias.
-6. **Generate** one enhanced OHLC forecast for
+2. **Ingest and expose technical indicators**: For every `fintech_*` timeframe block, include the entire `technical_indicators` object exactly as supplied, without omitting any fields. Surface each study’s most recent datapoint (e.g., `RSI.latest`, `MACD.latest`, `MACD.signal`, `MACD.histogram`, Bollinger upper/middle/lower) and keep studies in their original order. If a timeframe’s `technical_indicators` is empty, clearly mark that section as “no data”.
+3. **Compute** historical performance for each chart pattern: calculate the win rate of each pattern over the past N occurrences per timeframe and derive confidence-adjusted weights.
+4. **Detect** technical divergences: scan RSI and MACD versus price on hourly and daily timeframes to flag regular or hidden divergences, then adjust forecast bounds toward support/resistance if divergences are present.
+5. **Classify** volatility regimes: compute the ratio of 14-period ATR to 50-period ATR on each timeframe; label regimes as low, normal, or high volatility and expand/contract forecast ranges accordingly.
+6. **Evaluate** the `next_prediction_from_finnhub` block (including `component_forecasts`); if signals diverge, refine those OHLC values by weighting across timeframes using confidence scores, pattern performance weights, divergence flags, and correcting for historical forecast bias.
+7. **Generate** one enhanced OHLC forecast for
    * `daily_forecast` → the current trading day’s expected bar
    * `weekly_forecast` → the ongoing calendar week’s expected bar
-7. **Optimize** stop-loss and profit-target levels by backtesting ATR-based stop/target pairs over the historical dataset and selecting levels that maximize reward-to-risk.
-8. **[Optional] Ensemble** indicator signals: treat each major indicator signal (e.g., MA crossovers, Bollinger squeezes, ADX thresholds) as votes and compute a consensus directional probability to support the forecast.
-9. **Output format – EXACTLY TWO SECTIONS**:
+8. **Optimize** stop-loss and profit-target levels by backtesting ATR-based stop/target pairs over the historical dataset and selecting levels that maximize reward-to-risk.
+9. **[Optional] Ensemble** indicator signals: treat each major indicator signal (e.g., MA crossovers, Bollinger squeezes, ADX thresholds) as votes and compute a consensus directional probability to support the forecast.
+10. **Output format – EXACTLY TWO SECTIONS**:
 
 ### **SECTION 1 — concise output (no extra text)**
 Return *only* a JSON object, no commentary:
@@ -120,25 +121,6 @@ Tone: conversational yet professional—like advising an intermediate retail tra
 * If forecast uncertainty is high, state it and suggest waiting for confirmation instead of forcing a trade.
 
 ---
-
-## Example call signature (pseudocode)
-
-```python
-enhanced = o3_chat(
-    system_prompt = "<You are a professional technical analyst ...>",
-    user_prompt   = PROMPT_BELOW,
-    variables     = { "data": payload_json }
-)
-```
-
----
-
-## Prompt to O3 (copy from here)
-
-```text
-
-```
-PROMPT
 
 
 Please enhance the forecast using the multi‑timeframe technical JSON provided in the variable `data` following all instructions.  Output Section 1 then Section 2 exactly as specified.

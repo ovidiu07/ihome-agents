@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field, field_validator, RootModel
 from typing import Any, Dict, Optional, List
 import pytz
 from pandas.tseries.offsets import BDay  # from pandas
+import yfinance as yf
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -118,8 +119,8 @@ def _call_finnhub(
   for attempt in range(1, MAX_RETRIES + 1):
     try:
       url = f"{BASE_URL}{path}"
-      full_url = requests.Request('GET', url, params=params).prepare().url
-      logger.debug("Finnhub request: %s", full_url)
+      # full_url = requests.Request('GET', url, params=params).prepare().url
+      # logger.debug("Finnhub request: %s", full_url)
       resp = sess.get(url, params=params, timeout=20)
       if resp.status_code >= 400:
         raise requests.HTTPError(f"{resp.status_code} error: {resp.text}", response=resp)
@@ -202,10 +203,23 @@ def get_candles(
     "from":       int(start.timestamp()),
     "to":         int(end.timestamp()),
   }
-  data = _call_finnhub("/stock/candle", params, session)
-  if data.get("s") == "no_data":
-    logger.warning(f"No candle data returned for {symbol} between {start} and {end}")
-    raise ValueError("No candle data available")
+  logger.warning(f"No candle data returned for {symbol} between {start} and {end}, falling back to yfinance")
+  # Map resolution to yfinance interval
+  interval = f"{resolution}m" if resolution.isdigit() else ("1d" if resolution.upper()=="D" else "1wk")
+  # Fetch from yfinance
+  df = yf.Ticker(symbol).history(start=start, end=end, interval=interval, prepost=True)
+  if df.empty:
+    raise ValueError("No candle data available from yfinance fallback")
+  # Build the same dict shape
+  data = {
+    "o": df["Open"].tolist(),
+    "h": df["High"].tolist(),
+    "l": df["Low"].tolist(),
+    "c": df["Close"].tolist(),
+    "v": df["Volume"].astype(float).tolist(),
+    "t": [int(ts.timestamp()) for ts in df.index.to_pydatetime()],
+    "s": "ok"
+  }
   return CandleResponse.model_validate(data)
 
 
@@ -270,7 +284,10 @@ def get_technical_indicator(
 
   # Set ideal time-periods for each indicator
   ind = indicator.lower()
-  if ind in {"sma", "wma", "dema", "tema", "trima", "kama", "t3"}:
+  # Aroon indicators default to a 3-period window
+  if ind in {"aroon", "aroonosc"}:
+    params["timeperiod"] = 3
+  elif ind in {"sma", "wma", "dema", "tema", "trima", "kama", "t3"}:
     # Short MA for intraday, standard for daily
     params["timeperiod"] = 8 if intraday else 14
 
@@ -356,17 +373,26 @@ def fetch_all(
   now_utc = datetime.utcnow()
   now_et = now_utc.astimezone(eastern)
 
-  # If it's weekend or before Monday 9:30 AM, go to last weekday close
-  if now_et.weekday() >= 5 or (now_et.weekday() == 0 and now_et.time() < datetime.strptime("09:30", "%H:%M").time()):
-    end_et = (now_et - BDay(1)).replace(hour=16, minute=0, second=0, microsecond=0)
+  # Determine ending timestamp based on resolution and market days
+  if resolution in ("1", "5"):
+    # For 1- and 5-minute, we want the last 3 hours relative to now ET
+    end_et = now_et
   else:
-    # Today during market hours or after
-    end_et = now_et.replace(hour=16, minute=0, second=0, microsecond=0)
+    # For daily/weekly, adhere to market close logic
+    market_open = datetime.strptime("09:30", "%H:%M").time()
+    if now_et.weekday() >= 5 or (now_et.weekday() == 0 and now_et.time() < market_open):
+      # Weekend or before Monday open: use last business day's 16:00
+      end_et = (now_et - BDay(1)).replace(hour=16, minute=0, second=0, microsecond=0)
+    else:
+      # During market hours or after: use today's close at 16:00
+      end_et = now_et.replace(hour=16, minute=0, second=0, microsecond=0)
 
   end = end_et.astimezone(pytz.utc).replace(tzinfo=None)
   if resolution in ("1", "5"):
     # fetch 1-minute bars for the last 3 hours
     start = end - timedelta(hours=3)
+  elif resolution == "W":
+    start = end - timedelta(weeks=2)
   else:
     start = end - timedelta(days=lookback_days)
   indicators = [
