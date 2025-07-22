@@ -10,6 +10,7 @@ import os
 import pandas as pd
 import sys
 from pathlib import Path
+from datetime import datetime
 
 # Optional dotenv support ----------------------------------------------------
 try:
@@ -61,7 +62,11 @@ def main(symbol: str = "NVDA") -> None:
 
   symbol = symbol.upper()
   # Save the initial results to JSON file
-  results = {"symbol": symbol}
+  results = {
+    "symbol": symbol,
+    "current_date": datetime.now().strftime("%Y-%m-%d")
+  }
+
   export_analysis_results(results)
 
 
