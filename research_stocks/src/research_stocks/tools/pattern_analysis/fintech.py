@@ -12,9 +12,13 @@ from dotenv import load_dotenv
 from pathlib import Path
 from pydantic import BaseModel, Field, field_validator, RootModel
 from typing import Any, Dict, Optional, List
+import pytz
+from pandas.tseries.offsets import BDay  # from pandas
+import yfinance as yf
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.DEBUG)
+logging.basicConfig(level=logging.DEBUG)
 
 BASE_URL = "https://finnhub.io/api/v1"
 BACKOFF_FACTOR = 1.5
@@ -109,12 +113,14 @@ def _call_finnhub(
   token = _get_token()
   params = dict(params)
   params["token"] = token
-  url = f"{BASE_URL}{path}"
   sess = session or requests.Session()
 
   delay = 1.0
   for attempt in range(1, MAX_RETRIES + 1):
     try:
+      url = f"{BASE_URL}{path}"
+      # full_url = requests.Request('GET', url, params=params).prepare().url
+      # logger.debug("Finnhub request: %s", full_url)
       resp = sess.get(url, params=params, timeout=20)
       if resp.status_code >= 400:
         raise requests.HTTPError(f"{resp.status_code} error: {resp.text}", response=resp)
@@ -197,7 +203,23 @@ def get_candles(
     "from":       int(start.timestamp()),
     "to":         int(end.timestamp()),
   }
-  data = _call_finnhub("/stock/candle", params, session)
+  logger.warning(f"No candle data returned for {symbol} between {start} and {end}, falling back to yfinance")
+  # Map resolution to yfinance interval
+  interval = f"{resolution}m" if resolution.isdigit() else ("1d" if resolution.upper()=="D" else "1wk")
+  # Fetch from yfinance
+  df = yf.Ticker(symbol).history(start=start, end=end, interval=interval, prepost=True)
+  if df.empty:
+    raise ValueError("No candle data available from yfinance fallback")
+  # Build the same dict shape
+  data = {
+    "o": df["Open"].tolist(),
+    "h": df["High"].tolist(),
+    "l": df["Low"].tolist(),
+    "c": df["Close"].tolist(),
+    "v": df["Volume"].astype(float).tolist(),
+    "t": [int(ts.timestamp()) for ts in df.index.to_pydatetime()],
+    "s": "ok"
+  }
   return CandleResponse.model_validate(data)
 
 
@@ -233,28 +255,110 @@ def get_aggregate_indicator(
 
 def get_technical_indicator(
     symbol: str,
-    indicator: str = "rsi",
+    indicator: str,
     resolution: str = "D",
     start: datetime | None = None,
     end: datetime | None = None,
-    timeperiod: int = 1,
     session: Optional[requests.Session] = None,
-) -> TechnicalIndicatorResponse:
-  """Return custom technical indicator data for ``symbol``."""
+) -> dict[str, Any] | None:
+  """
+  Return a single technical indicator series for ``symbol``.
+  Only one API call is made per indicator name.
+  Time-periods are automatically tuned for intraday vs daily.
+  """
   if start is None:
     start = datetime.utcnow() - timedelta(days=365)
   if end is None:
     end = datetime.utcnow()
+
   params = {
     "symbol":     symbol.upper(),
-    "indicator":  indicator,
+    "indicator":  indicator.lower(),
     "resolution": resolution,
     "from":       int(start.timestamp()),
     "to":         int(end.timestamp()),
-    "timeperiod": timeperiod,
   }
+
+  # Determine if we're on an intraday chart
+  intraday = resolution not in {"D", "W"}
+
+  # Set ideal time-periods for each indicator
+  ind = indicator.lower()
+  # Aroon indicators default to a 3-period window
+  if ind in {"aroon", "aroonosc"}:
+    params["timeperiod"] = 3
+  elif ind in {"sma", "wma", "dema", "tema", "trima", "kama", "t3"}:
+    # Short MA for intraday, standard for daily
+    params["timeperiod"] = 8 if intraday else 14
+
+  elif ind == "ema":
+    params["timeperiod"] = 9 if intraday else 14
+
+  elif ind == "rsi":
+    # Faster RSI on 1/5-min, moderate on 15/30/60, standard otherwise
+    if resolution in {"1", "5"}:
+      params["timeperiod"] = 5
+    elif resolution in {"15", "30", "60"}:
+      params["timeperiod"] = 9
+    else:
+      params["timeperiod"] = 14
+
+  elif ind in {"cci", "cmo", "roc", "rocr", "adx", "adxr",
+               "willr", "mfi", "ultosc", "dx",
+               "minusdi", "plusdi", "minusdm", "plusdm",
+               "atr", "natr", "mom"}:
+    params["timeperiod"] = 10 if intraday else 14
+
+  elif ind in {"macd", "macdext"}:
+    # Fast MACD for intraday, classic for daily
+    if intraday:
+      params["fastperiod"] = 3
+      params["slowperiod"] = 10
+      params["signalperiod"] = 16
+    else:
+      params["fastperiod"] = 12
+      params["slowperiod"] = 26
+      params["signalperiod"] = 9
+
+  elif ind == "stoch":
+    params["fastkperiod"] = 5
+    params["slowkperiod"] = 3
+    params["slowdperiod"] = 3
+
+  elif ind == "stochf":
+    params["fastkperiod"] = 5
+    params["fastdperiod"] = 3
+
+  elif ind == "stochrsi":
+    params["timeperiod"] = 14
+    params["fastkperiod"] = 5
+    params["fastdperiod"] = 3
+
+  elif ind in {"apo", "ppo"}:
+    params["fastperiod"] = 12
+    params["slowperiod"] = 26
+
+  elif ind == "adosc":
+    params["fastperiod"] = 3
+    params["slowperiod"] = 10
+
+  elif ind == "ultosc":
+    params["timeperiod1"] = 7
+    params["timeperiod2"] = 14
+    params["timeperiod3"] = 28
+
+  elif ind == "bbands":
+    # Standard Bollinger Bands remain at 20,2 even intraday
+    params["timeperiod"] = 20
+    params["nbdevup"] = 2
+    params["nbdevdn"] = 2
+
+  # Fetch and handle no-data case
   data = _call_finnhub("/indicator", params, session)
-  return TechnicalIndicatorResponse.model_validate(data)
+  if data.get("s") == "no_data":
+    return None
+
+  return data
 
 
 def fetch_all(
@@ -265,26 +369,68 @@ def fetch_all(
     session: Optional[requests.Session] = None,
 ) -> Path:
   """High-level façade to fetch & save all endpoints."""
-  end = datetime.utcnow()
-  start = end - timedelta(days=lookback_days)
+  eastern = pytz.timezone("US/Eastern")
+  now_utc = datetime.utcnow()
+  now_et = now_utc.astimezone(eastern)
+
+  # Determine ending timestamp based on resolution and market days
+  if resolution in ("1", "5"):
+    # For 1- and 5-minute, we want the last 3 hours relative to now ET
+    end_et = now_et
+  else:
+    # For daily/weekly, adhere to market close logic
+    market_open = datetime.strptime("09:30", "%H:%M").time()
+    if now_et.weekday() >= 5 or (now_et.weekday() == 0 and now_et.time() < market_open):
+      # Weekend or before Monday open: use last business day's 16:00
+      end_et = (now_et - BDay(1)).replace(hour=16, minute=0, second=0, microsecond=0)
+    else:
+      # During market hours or after: use today's close at 16:00
+      end_et = now_et.replace(hour=16, minute=0, second=0, microsecond=0)
+
+  end = end_et.astimezone(pytz.utc).replace(tzinfo=None)
+  if resolution in ("1", "5"):
+    # fetch 1-minute bars for the last 3 hours
+    start = end - timedelta(hours=3)
+  elif resolution == "W":
+    start = end - timedelta(weeks=2)
+  else:
+    start = end - timedelta(days=lookback_days)
+  indicators = [
+    "SMA","EMA","WMA","DEMA","TEMA","TRIMA","KAMA","MAMA","T3",
+    "MACD","MACDEXT","STOCH","STOCHF","RSI","STOCHRSI","WILLR",
+    "ADX","ADXR","APO","PPO","MOM","BOP","CCI","CMO","ROC","ROCR",
+    "AROON","AROONOSC","MFI","TRIX","ULTOSC","DX","MINUSDI","PLUSDI",
+    "MINUSDM","PLUSDM","BBANDS","MIDPOINT","MIDPRICE","SAR","TRANGE",
+    "ATR","NATR","AD","ADOSC","OBV","HTTRENDLINE","HTSINE",
+    "HTTRENDMODE","HTDCPERIOD","HTDCPHASE","HTPHASOR",
+  ]
+
 
   candles = get_candles(symbol, resolution, start, end, session)
   patterns = get_pattern_recognition(symbol,resolution, session)
   support_resistance = get_support_resistance(symbol,resolution, session)
   aggregate_indicator = get_aggregate_indicator(symbol, resolution, session)
-  technical_indicators = get_technical_indicator(symbol, resolution=resolution,
-                                                 start=start, end=end, session=session)
 
   result = {
     "symbol":                symbol.upper(),
     "resolution":            resolution,
     "last_updated_utc":      end.isoformat() + "Z",
-    "candles":               candles.dict(),
-    "patterns":              patterns.dict().get("points", []),
-    "support_resistance":    support_resistance.dict(),
-    "aggregate_indicator":   aggregate_indicator.dict(),
-    "technical_indicators":  technical_indicators.dict(),
+    "candles":               candles.dict() if candles else {},
+    "patterns":              patterns.dict().get("points", []) if patterns else [],
+    "support_resistance":    support_resistance.dict() if support_resistance else {},
+    "aggregate_indicator":   aggregate_indicator.dict() if aggregate_indicator else {},
   }
+  technical_indicators: dict[str, Any] = {}
+  for ind in indicators:
+    try:
+        indicator_response = get_technical_indicator(symbol, ind, resolution, start, end, session=session)
+        if indicator_response:
+            for key in ("o", "h", "l", "c", "v", "t", "s"):
+              indicator_response.pop(key, None)
+            technical_indicators[ind] = indicator_response
+    except Exception as e:
+        logger.warning(f"Failed to fetch technical indicator {ind}: {e}")
+  result["technical_indicators"] = technical_indicators
 
   path = Path(save_path)
   path.mkdir(parents=True, exist_ok=True)

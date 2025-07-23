@@ -167,7 +167,7 @@ def analyze_patterns(
     *,
     window: int = 5,
     volume_col: str | None = None,
-) -> Dict[str, Any]:
+) ->None :
     """
     Scan *daily* and (optionally) *hourly* data for candlestick and chart
     patterns and return a unified result object.
