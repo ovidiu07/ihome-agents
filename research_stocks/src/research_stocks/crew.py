@@ -10,6 +10,13 @@ from dotenv import load_dotenv
 from functools import lru_cache
 from pathlib import Path
 from urllib.parse import quote_plus  # ← NEW
+# FOR DOCKER
+# from research_stocks.tools.pattern_analysis.fintech import fetch_all
+# from research_stocks.tools.pattern_analysis.forecasting import next_prediction_from_finnhub
+#
+# from research_stocks.tools.market_data_tools import (PoliticalNewsTool, MarkdownFormatterTool,
+#                                      GrammarCheckTool)
+
 from tools.pattern_analysis.fintech import fetch_all
 from tools.pattern_analysis.forecasting import next_prediction_from_finnhub
 

@@ -18,8 +18,12 @@ from pytz import timezone
 
 from crew import StockAnalysisCrew
 from tools.run_analysis import main as run_pattern_analysis
+# FOR DOCKER
+# from .crew import StockAnalysisCrew
+# from ..tools.run_analysis import main as run_pattern_analysis
 
-
+from dotenv import load_dotenv
+load_dotenv()
 def run_analysis_and_crew(symbol: str) -> str:
   """
   Run the pattern analysis and then the crew for the given symbol.
@@ -54,7 +58,7 @@ def safe_run(symbol: str) -> str:
 
 LOCAL_TZ = timezone("Europe/Bucharest")
 TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
-S3_BUCKET = os.getenv("S3_BUCKET", "stock-forecasts")
+S3_BUCKET = os.getenv("S3_BUCKET", "devtailor-transactions")
 
 # Store submitted symbols per day in memory
 DAILY_SYMBOLS: dict[str, list[str]] = {}
