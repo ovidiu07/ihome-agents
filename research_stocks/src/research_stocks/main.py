@@ -1,6 +1,20 @@
+"""Web front-end and scheduler for the ResearchStocks crew."""
+
+from __future__ import annotations
+
+import json
 import logging
 import os
-import sys
+import re
+from datetime import datetime
+from pathlib import Path
+
+import boto3
+from apscheduler.schedulers.background import BackgroundScheduler
+from fastapi import FastAPI, Form, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.templating import Jinja2Templates
+from pytz import timezone
 
 from crew import StockAnalysisCrew
 from tools.run_analysis import main as run_pattern_analysis
@@ -36,29 +50,103 @@ def safe_run(symbol: str) -> str:
     logging.error(f"Critical error in execution: {e}")
     return generate_fallback_report()
 
+# ─── Globals ──────────────────────────────────────────────────────────────
 
-def main() -> None:
-  print("## Welcome to Stock Analysis Crew")
-  print('-------------------------------')
+LOCAL_TZ = timezone("Europe/Bucharest")
+TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
+S3_BUCKET = os.getenv("S3_BUCKET", "stock-forecasts")
 
-  # Get symbol from user input
-  symbol = input(
-    "Enter the symbol for which you want to forecast: ").strip().upper()
-  if not symbol:
-    symbol = "MSFT"  # Default if no input
-    print(f"No symbol provided, using default: {symbol}")
+# Store submitted symbols per day in memory
+DAILY_SYMBOLS: dict[str, list[str]] = {}
 
-  # Ensure output directory exists
+
+# ─── FastAPI setup ─────────────────────────────────────────────────────────
+
+app = FastAPI()
+templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
+
+
+@app.get("/", response_class=HTMLResponse)
+def index(request: Request) -> HTMLResponse:
+  """Render the symbol submission form."""
+  today = datetime.now(LOCAL_TZ).strftime("%Y-%m-%d")
+  symbols = DAILY_SYMBOLS.get(today, [])
+  return templates.TemplateResponse(
+      "index.html", {"request": request, "symbols": symbols})
+
+
+@app.post("/submit")
+def submit_symbols(symbols: str = Form(...)) -> RedirectResponse:
+  """Store the submitted symbols for today's date."""
+  symbol_list = [s.strip().upper() for s in re.split(r"[,\s]+", symbols) if s.strip()]
+  today = datetime.now(LOCAL_TZ).strftime("%Y-%m-%d")
+  DAILY_SYMBOLS[today] = symbol_list
+  return RedirectResponse("/", status_code=303)
+
+
+# ─── Forecast logic & scheduler ────────────────────────────────────────────
+
+def process_today_symbols() -> None:
+  """Run analysis for today's submitted symbols and upload results to S3."""
+  today = datetime.now(LOCAL_TZ).strftime("%Y-%m-%d")
+  symbols = DAILY_SYMBOLS.get(today, [])
+  if not symbols:
+    print("No symbols submitted for today.")
+    return
+
+  run_time = datetime.now(LOCAL_TZ).strftime("%d-%b-%Y-%H-%M")
+  s3_client = boto3.client("s3")
+
   os.makedirs("output", exist_ok=True)
+  for sym in symbols:
+    print(f"\nProcessing {sym} ...")
+    safe_run(sym)
+    result_path = Path("output") / f"pattern_analysis_results_{sym}.json"
+    if result_path.exists():
+      with open(result_path, "rb") as fh:
+        s3_client.put_object(
+            Bucket=S3_BUCKET,
+            Key=f"{run_time}/{sym}.json",
+            Body=fh.read(),
+            ContentType="application/json",
+        )
+      print(f"Uploaded results for {sym} to s3://{S3_BUCKET}/{run_time}/")
+    else:
+      logging.warning("Result JSON for %s not found", sym)
 
-  # Run the analysis
-  result = safe_run(symbol)
 
-  print("\n\n########################")
-  print("## Here is the Report")
-  print("########################\n")
-  print(result)
+def start_scheduler() -> BackgroundScheduler:
+  """Configure and start the APScheduler."""
+  scheduler = BackgroundScheduler(timezone=LOCAL_TZ)
+  schedule_times = [(15, 0), (16, 0), (17, 0), (18, 30), (19, 30)]
+  for hour, minute in schedule_times:
+    scheduler.add_job(
+        process_today_symbols,
+        "cron",
+        day_of_week="mon-fri",
+        hour=hour,
+        minute=minute,
+    )
+  scheduler.start()
+  return scheduler
+
+
+@app.on_event("startup")
+def on_startup() -> None:
+  """Start the background scheduler when the app launches."""
+  global SCHEDULER
+  SCHEDULER = start_scheduler()
+
+
+@app.on_event("shutdown")
+def on_shutdown() -> None:
+  """Shut down the scheduler gracefully."""
+  if SCHEDULER:
+    SCHEDULER.shutdown()
 
 
 if __name__ == "__main__":
-  main()
+  import uvicorn
+
+  uvicorn.run("research_stocks.main:app", host="0.0.0.0", port=8000)
+
