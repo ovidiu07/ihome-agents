@@ -699,7 +699,7 @@ class StockAnalysisCrew:
     print(f"✅ Merged {len(news)} headlines into {results_path}")
 
   @crew
-  def build_market_brief(self) -> None:
+  def build_market_brief(self, is_general_analysis: bool = True) -> None:
     """
     Executes the end-to-end workflow for generating a market brief for a stock symbol.
 
@@ -715,11 +715,17 @@ class StockAnalysisCrew:
     This is the main entry point for the stock analysis workflow and should be
     called with the target symbol(s) set in the _symbol attribute.
 
+    Args:
+        is_general_analysis: If True, perform general analysis (fetch all finnhub data).
+                            If False, perform intraday analysis (fetch only intraday data).
+
     Returns:
         None
     """
     # Log the start of the process
     print(f"Starting Market Briefing Crew for symbol: {self._symbol}...")
+    analysis_type = "general" if is_general_analysis else "intraday"
+    print(f"Analysis type: {analysis_type}")
 
     # ── Step 1: Harvest financial news data (cost-efficient, no LLM) ───────
     # Normalize self._symbol (which may be a list) into a single string
@@ -735,7 +741,7 @@ class StockAnalysisCrew:
     harvest_data_offline([symbol], days_back=1)
 
     try:
-      # Fetch all Finnhub data for this symbol
+      # Always fetch intraday data
       fintech_one_minute = fetch_all(symbol, resolution="1", lookback_days=1,
                                   save_path="output")
       fintech_five_minutes = fetch_all(symbol, resolution="5", lookback_days=1,
@@ -744,55 +750,69 @@ class StockAnalysisCrew:
                                      save_path="output")
       fintech_hourly = fetch_all(symbol, resolution="60", lookback_days=3,
                                  save_path="output")
-      fintech_daily = fetch_all(symbol, resolution="D", lookback_days=14,
-                               save_path="output")
-      fintech_weekly = fetch_all(symbol, resolution="W", lookback_days=14,
+
+      # Fetch daily and weekly data only for general analysis
+      if is_general_analysis:
+        fintech_daily = fetch_all(symbol, resolution="D", lookback_days=14,
                                 save_path="output")
+        fintech_weekly = fetch_all(symbol, resolution="W", lookback_days=14,
+                                  save_path="output")
+      else:
+        fintech_daily = None
+        fintech_weekly = None
 
     except Exception as e:
       logging.warning("Failed to fetch fintech data: %s", e)
-      fintech_daily = None
       fintech_hourly = None
       fintech_one_minute = None
       fintech_five_minutes = None
-      fintech_weekly = None
       fintech_fifteen_minutes = None
+      fintech_daily = None
+      fintech_weekly = None
 
-    if fintech_daily:
-      results_path = Path("output") / f"pattern_analysis_results_{symbol}.json"
-      try:
-        results = json.loads(results_path.read_text(encoding="utf-8"))
-      except FileNotFoundError:
-        results = {}
-      # Load fetched fintech data
-      fintech_data_daily = json.loads(fintech_daily.read_text(encoding="utf-8"))
-      results["fintech_daily"] = fintech_data_daily
+    # Process the fetched data
+    results_path = Path("output") / f"pattern_analysis_results_{symbol}.json"
+    try:
+      results = json.loads(results_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+      results = {}
 
-      fintech_data_hourly = json.loads(
-          fintech_hourly.read_text(encoding="utf-8"))
-      results["fintech_hourly"] = fintech_data_hourly
-
+    # Load fetched intraday fintech data
+    if fintech_one_minute:
       fintech_data_one_minute = json.loads(fintech_one_minute.read_text(encoding="utf-8"))
       results["fintech_one_minute"] = fintech_data_one_minute
 
+    if fintech_five_minutes:
       fintech_data_five_minutes = json.loads(fintech_five_minutes.read_text(encoding="utf-8"))
       results["fintech_five_minutes"] = fintech_data_five_minutes
 
+    if fintech_fifteen_minutes:
       fintech_data_fifteen_minutes = json.loads(fintech_fifteen_minutes.read_text(encoding="utf-8"))
       results["fintech_fifteen_minutes"] = fintech_data_fifteen_minutes
 
-      fintech_data_weekly = json.loads(fintech_weekly.read_text(encoding="utf-8"))
-      results["fintech_weekly"] = fintech_data_weekly
+    if fintech_hourly:
+      fintech_data_hourly = json.loads(fintech_hourly.read_text(encoding="utf-8"))
+      results["fintech_hourly"] = fintech_data_hourly
 
-      # Compute immediate forecast from raw Finnhub payload
-      try:
-        results["next_prediction_from_finnhub"] = next_prediction_from_finnhub(results)
-      except Exception as exc:
-        logging.warning("Failed to build next_prediction: %s", exc)
+    # Load daily and weekly data only for general analysis
+    if is_general_analysis:
+      if fintech_daily:
+        fintech_data_daily = json.loads(fintech_daily.read_text(encoding="utf-8"))
+        results["fintech_daily"] = fintech_data_daily
 
-      results_path.parent.mkdir(parents=True, exist_ok=True)
-      results_path.write_text(
-          json.dumps(results, indent=2), encoding="utf-8")
+      if fintech_weekly:
+        fintech_data_weekly = json.loads(fintech_weekly.read_text(encoding="utf-8"))
+        results["fintech_weekly"] = fintech_data_weekly
+
+    # Compute immediate forecast from raw Finnhub payload
+    try:
+      results["next_prediction_from_finnhub"] = next_prediction_from_finnhub(results)
+    except Exception as exc:
+      logging.warning("Failed to build next_prediction: %s", exc)
+
+    results_path.parent.mkdir(parents=True, exist_ok=True)
+    results_path.write_text(
+        json.dumps(results, indent=2), encoding="utf-8")
 
     # ── Step 2: Pull company‐specific news via Finnhub and append ────────
     try:

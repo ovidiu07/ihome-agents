@@ -24,12 +24,14 @@ from tools.run_analysis import main as run_pattern_analysis
 
 from dotenv import load_dotenv
 load_dotenv()
-def run_analysis_and_crew(symbol: str) -> str:
+def run_analysis_and_crew(symbol: str, is_general_analysis: bool = True) -> str:
   """
   Run the pattern analysis and then the crew for the given symbol.
 
   Args:
       symbol: The stock symbol to analyze
+      is_general_analysis: If True, perform general analysis (fetch all finnhub data).
+                          If False, perform intraday analysis (fetch only intraday data).
 
   Returns:
       The final report
@@ -40,16 +42,16 @@ def run_analysis_and_crew(symbol: str) -> str:
   # CrewAI-native invocation:
   crew_instance = StockAnalysisCrew()
   crew_instance._symbol = [symbol]  # ✅ Store symbol globally in the instance
-  return crew_instance.build_market_brief().kickoff()
+  return crew_instance.build_market_brief(is_general_analysis).kickoff()
 
 
 def generate_fallback_report():
   return "Analysis failed. No data available."
 
 
-def safe_run(symbol: str) -> str:
+def safe_run(symbol: str, is_general_analysis: bool = True) -> str:
   try:
-    return run_analysis_and_crew(symbol)
+    return run_analysis_and_crew(symbol, is_general_analysis)
   except Exception as e:
     logging.error(f"Critical error in execution: {e}")
     return generate_fallback_report()
@@ -90,8 +92,14 @@ def submit_symbols(symbols: str = Form(...)) -> RedirectResponse:
 
 # ─── Forecast logic & scheduler ────────────────────────────────────────────
 
-def process_today_symbols() -> None:
-  """Run analysis for today's submitted symbols and upload results to S3."""
+def process_today_symbols(is_general_analysis: bool = True) -> None:
+  """
+  Run analysis for today's submitted symbols and upload results to S3.
+
+  Args:
+      is_general_analysis: If True, perform general analysis (fetch all finnhub data).
+                          If False, perform intraday analysis (fetch only intraday data).
+  """
   today = datetime.now(LOCAL_TZ).strftime("%Y-%m-%d")
   symbols = DAILY_SYMBOLS.get(today, [])
   if not symbols:
@@ -104,7 +112,7 @@ def process_today_symbols() -> None:
   os.makedirs("output", exist_ok=True)
   for sym in symbols:
     print(f"\nProcessing {sym} ...")
-    safe_run(sym)
+    safe_run(sym, is_general_analysis)
     result_path = Path("output") / f"pattern_analysis_results_{sym}.json"
     if result_path.exists():
       with open(result_path, "rb") as fh:
@@ -122,15 +130,31 @@ def process_today_symbols() -> None:
 def start_scheduler() -> BackgroundScheduler:
   """Configure and start the APScheduler."""
   scheduler = BackgroundScheduler(timezone=LOCAL_TZ)
-  schedule_times = [(15, 0), (16, 0), (17, 0), (18, 30), (19, 30)]
-  for hour, minute in schedule_times:
+
+  # General analysis times (15:00 and 16:00)
+  general_analysis_times = [(15, 0), (16, 0)]
+  for hour, minute in general_analysis_times:
     scheduler.add_job(
         process_today_symbols,
         "cron",
         day_of_week="mon-fri",
         hour=hour,
         minute=minute,
+        kwargs={"is_general_analysis": True},
     )
+
+  # Intraday analysis times (17:00, 18:30, and 19:30)
+  intraday_analysis_times = [(17, 0), (18, 30), (19, 30)]
+  for hour, minute in intraday_analysis_times:
+    scheduler.add_job(
+        process_today_symbols,
+        "cron",
+        day_of_week="mon-fri",
+        hour=hour,
+        minute=minute,
+        kwargs={"is_general_analysis": False},
+    )
+
   scheduler.start()
   return scheduler
 
@@ -153,4 +177,3 @@ if __name__ == "__main__":
   import uvicorn
 
   uvicorn.run("research_stocks.main:app", host="0.0.0.0", port=8000)
-
