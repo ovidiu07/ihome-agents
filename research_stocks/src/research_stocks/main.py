@@ -144,7 +144,7 @@ def start_scheduler() -> BackgroundScheduler:
     )
 
   # Intraday analysis times (17:00, 18:30, and 19:30)
-  intraday_analysis_times = [(17, 0), (18, 30), (19, 30)]
+  intraday_analysis_times = [(17, 0), (17, 45), (18, 0),(18, 30), (19, 30)]
   for hour, minute in intraday_analysis_times:
     scheduler.add_job(
         process_today_symbols,
