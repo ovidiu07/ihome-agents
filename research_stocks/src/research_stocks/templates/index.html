@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Research Stocks</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@3.4.4/dist/tailwind.min.css" rel="stylesheet">
+</head>
+<body class="bg-gray-100 min-h-screen flex items-center justify-center">
+<div class="w-full max-w-lg p-4 bg-white rounded shadow">
+    <h1 class="text-xl font-semibold mb-4 text-center">What stocks are you going to trade today?</h1>
+    <form method="post" action="/submit" class="flex flex-col">
+        <textarea name="symbols" rows="3" class="p-2 border rounded mb-4" placeholder="AAPL, MSFT, NVDA"></textarea>
+        <button type="submit" class="bg-blue-600 text-white py-2 rounded">Submit</button>
+    </form>
+    {% if symbols %}
+    <div class="mt-4">
+        <h2 class="font-medium">Today's symbols:</h2>
+        <p>{{ symbols|join(', ') }}</p>
+    </div>
+    {% endif %}
+</div>
+</body>
+</html>

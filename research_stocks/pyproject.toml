@@ -14,6 +14,9 @@ html2text = "^2024.2.26"
 sec-api = "^1.0.20"
 pyyaml = "^6.0.2"
 ta-lib = "^0.6.4"
+boto3 = "^1.39.11"
+apscheduler = "^3.11.0"
+python-multipart = "^0.0.20"
 
 [tool.poetry.scripts]
 research_stocks = "research_stocks.main:run"
