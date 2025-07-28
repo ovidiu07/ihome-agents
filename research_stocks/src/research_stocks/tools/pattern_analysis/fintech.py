@@ -390,7 +390,7 @@ def fetch_all(
   end = end_et.astimezone(pytz.utc).replace(tzinfo=None)
   if resolution in ("1", "5"):
     # fetch 1-minute bars for the last 3 hours
-    start = end - timedelta(hours=3)
+    start = end - timedelta(hours=6)
   elif resolution == "W":
     start = end - timedelta(weeks=2)
   else:
