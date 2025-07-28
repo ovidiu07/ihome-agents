@@ -12,11 +12,5 @@ services:
       - ./research_stocks:/app/research_stocks
       - ./output:/app/output
     working_dir: /app/research_stocks/src
-    environment:
-      - FINNHUB_TOKEN=${FINNHUB_TOKEN}
-      - S3_BUCKET=${S3_BUCKET:-stock-forecasts}
-      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
-      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
-      - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:-us-east-1}
-      - PYTHONPATH=/app/research_stocks/src
+    command: ["python3", "main.py"]
     restart: unless-stopped
