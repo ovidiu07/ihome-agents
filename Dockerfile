@@ -20,8 +20,13 @@ COPY requirements.txt .
 # Install pip packages in two stages
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
-# 💡 Explicitly install TA-Lib with linker/include flags
-RUN CFLAGS="-I/usr/include" LDFLAGS="-L/usr/lib" pip install --no-cache-dir TA-Lib
+
+# Set TA-Lib include and library paths for pip install
+ENV TA_INCLUDE_PATH=/usr/include
+ENV TA_LIBRARY_PATH=/usr/lib
+
+RUN ln -s /usr/lib/libta_lib.so /usr/lib/libta-lib.so && \
+    pip install --no-cache-dir TA-Lib
 
 # Then install the rest
 RUN pip install --no-cache-dir -r requirements.txt
