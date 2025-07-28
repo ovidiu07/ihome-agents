@@ -9,8 +9,8 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ./research_stocks:/app/research_stocks
+      - ./research_stocks/src/research_stocks:/app
       - ./output:/app/output
-    working_dir: /app/research_stocks/src/research_stocks
-    command: ["python3", "main.py"]
+    working_dir: /app
+    command: [ "python3", "main.py" ]
     restart: unless-stopped
