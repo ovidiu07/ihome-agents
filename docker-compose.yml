@@ -12,5 +12,5 @@ services:
       - ./research_stocks/src/research_stocks:/app
       - ./output:/app/output
     working_dir: /app
-    command: [ "python3", "main.py" ]
+    command: [ "sleep", "3600" ]
     restart: unless-stopped
