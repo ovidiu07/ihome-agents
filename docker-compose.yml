@@ -11,6 +11,6 @@ services:
     volumes:
       - ./research_stocks:/app/research_stocks
       - ./output:/app/output
-    working_dir: /app/research_stocks/src
+    working_dir: /app/research_stocks/src/research_stocks
     command: ["python3", "main.py"]
     restart: unless-stopped
