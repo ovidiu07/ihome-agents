@@ -23,7 +23,7 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           source: |
             docker-compose.yml
-            research_stocks
+            research_stocks/src/research_stocks
           target: ~/ihome-agents
 
       - name: Deploy to server
