@@ -29,7 +29,7 @@ MAX_RETRIES = 3
 load_dotenv()
 
 # Optional throttle delay between requests (seconds)
-FINNHUB_THROTTLE = float(os.getenv("FINNHUB_THROTTLE", "0"))
+FINNHUB_THROTTLE = float(os.getenv("FINNHUB_THROTTLE", "0.4"))
 
 # Track number of API calls for logging
 _API_CALL_COUNT = 0
@@ -109,9 +109,9 @@ def get_company_news(
     "from": start.strftime("%Y-%m-%d"),
     "to":   end.strftime("%Y-%m-%d"),
   }
-  data = _call_finnhub("/company-news", params, session)
-  resp = CompanyNewsResponse.model_validate(data)
-  return resp.root
+  # data = _call_finnhub("/company-news", params, session)
+  # resp = CompanyNewsResponse.model_validate(data)
+  return []
 
 
 def _get_token() -> str:
