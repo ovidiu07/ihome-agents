@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 
@@ -95,6 +96,7 @@ def submit_symbols(symbols: str = Form(...)) -> RedirectResponse:
 def process_today_symbols(is_general_analysis: bool = True) -> None:
   """
   Run analysis for today's submitted symbols and upload results to S3.
+  Processes symbols in parallel using ThreadPoolExecutor.
 
   Args:
       is_general_analysis: If True, perform general analysis (fetch all finnhub data).
@@ -108,23 +110,34 @@ def process_today_symbols(is_general_analysis: bool = True) -> None:
 
   run_time = datetime.now(LOCAL_TZ).strftime("%d-%b-%Y-%H-%M")
   s3_client = boto3.client("s3")
-
   os.makedirs("output", exist_ok=True)
-  for sym in symbols:
-    print(f"\nProcessing {sym} ...")
-    safe_run(sym, is_general_analysis)
-    result_path = Path("output") / f"pattern_analysis_results_{sym}.json"
-    if result_path.exists():
-      with open(result_path, "rb") as fh:
-        s3_client.put_object(
-            Bucket=S3_BUCKET,
-            Key=f"{run_time}/{sym}.json",
-            Body=fh.read(),
-            ContentType="application/json",
-        )
-      print(f"Uploaded results for {sym} to s3://{S3_BUCKET}/{run_time}/")
-    else:
-      logging.warning("Result JSON for %s not found", sym)
+
+  def process_symbol(sym):
+    """Process a single symbol and upload results to S3."""
+    try:
+      print(f"\nProcessing {sym} ...")
+      safe_run(sym, is_general_analysis)
+      result_path = Path("output") / f"pattern_analysis_results_{sym}.json"
+      if result_path.exists():
+        with open(result_path, "rb") as fh:
+          s3_client.put_object(
+              Bucket=S3_BUCKET,
+              Key=f"{run_time}/{sym}.json",
+              Body=fh.read(),
+              ContentType="application/json",
+          )
+        print(f"Uploaded results for {sym} to s3://{S3_BUCKET}/{run_time}/")
+      else:
+        logging.warning("Result JSON for %s not found", sym)
+    except Exception as e:
+      logging.error(f"Error processing symbol {sym}: {e}")
+
+  # Process symbols in parallel
+  # Use max_workers to control the level of parallelism
+  max_workers = min(10, len(symbols))  # Limit to 10 concurrent workers or number of symbols, whichever is smaller
+  with ThreadPoolExecutor(max_workers=max_workers) as executor:
+    # Use list() to ensure all futures are completed before function returns
+    list(executor.map(process_symbol, symbols))
 
 
 def start_scheduler() -> BackgroundScheduler:
@@ -132,7 +145,7 @@ def start_scheduler() -> BackgroundScheduler:
   scheduler = BackgroundScheduler(timezone=LOCAL_TZ)
 
   # General analysis times (15:00 and 16:00)
-  general_analysis_times = [(15, 0), (16, 0)]
+  general_analysis_times = [(11, 50),(15, 0), (16, 0)]
   for hour, minute in general_analysis_times:
     scheduler.add_job(
         process_today_symbols,
