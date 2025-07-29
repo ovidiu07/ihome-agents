@@ -38,9 +38,6 @@ def main(symbol: str = "NVDA") -> None:
   4. Generates forecasts using multiple methods (ensemble and probabilistic)
   5. Exports the results to JSON files
 
-  The function requires a Polygon API key to be set in the environment variables
-  to fetch the necessary market data.
-
   Args:
       symbol: Stock ticker symbol to analyze (default: "NVDA")
               Will be automatically converted to uppercase
@@ -54,11 +51,6 @@ def main(symbol: str = "NVDA") -> None:
       - May create intraday factor snapshots
   """
   # ─── Environment / configuration ───────────────────────────────────────
-  load_dotenv()
-  poly_key: str | None = os.getenv("POLYGON_KEY")
-  if not poly_key:
-    print("❌  POLYGON_KEY not set in environment variables.", file=sys.stderr)
-    return
 
   symbol = symbol.upper()
   # Save the initial results to JSON file
