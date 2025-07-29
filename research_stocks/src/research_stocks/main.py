@@ -131,13 +131,9 @@ def process_today_symbols(is_general_analysis: bool = True) -> None:
     except Exception as e:
       logging.error(f"Error processing symbol {sym}: {e}")
 
-  # Process symbols in parallel
-  # Use max_workers to control the level of parallelism
-  max_workers = min(10, len(
-    symbols))  # Limit to 10 concurrent workers or number of symbols, whichever is smaller
-  with ThreadPoolExecutor(max_workers=max_workers) as executor:
-    # Use list() to ensure all futures are completed before function returns
-    list(executor.map(process_symbol, symbols))
+  # Process symbols sequentially to reduce complexity and resource usage
+  for sym in symbols:
+    process_symbol(sym)
 
 
 def start_scheduler() -> BackgroundScheduler:
