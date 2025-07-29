@@ -8,9 +8,9 @@ services:
       dockerfile: Dockerfile
     ports:
       - "8000:8000"
-    volumes:
-      - ./research_stocks/src/research_stocks:/app
-      - ./output:/app/output
+#    volumes:
+#      - ./research_stocks/src/research_stocks:/app
+#      - ./output:/app/output
     working_dir: /app
     command: [ "sleep", "3600" ]
     restart: unless-stopped
