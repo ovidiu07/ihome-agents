@@ -771,6 +771,7 @@ class StockAnalysisCrew:
     except FileNotFoundError:
       results = {}
 
+    print(f"Starting to fetch information for symbol: {symbol}...")
     # Load fetched intraday fintech data
     if fintech_one_minute:
       fintech_data_one_minute = json.loads(fintech_one_minute.read_text(encoding="utf-8"))
@@ -800,6 +801,7 @@ class StockAnalysisCrew:
 
     # Compute immediate forecast from raw Finnhub payload
     try:
+      print(f"Writing next prediction for symbol: {symbol}...")
       results["next_prediction_from_finnhub"] = next_prediction_from_finnhub(results)
     except Exception as exc:
       logging.warning("Failed to build next_prediction: %s", exc)
@@ -816,7 +818,7 @@ class StockAnalysisCrew:
       start = datetime.utcnow() - timedelta(days=1)
       end = datetime.utcnow()
       news_items = get_company_news(symbol, start, end)
-
+      print(f"Creating json file for symbol: {symbol}...")
       results_path = Path("output") / f"pattern_analysis_results_{symbol}.json"
       try:
         results = json.loads(results_path.read_text(encoding="utf-8"))
