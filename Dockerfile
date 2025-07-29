@@ -25,6 +25,8 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 ENV TA_INCLUDE_PATH=/usr/include
 ENV TA_LIBRARY_PATH=/usr/lib
 
+RUN test -f /usr/lib/libta_lib.so && echo "TA-Lib C library is in place ✅"
+
 RUN ln -s /usr/lib/libta_lib.so /usr/lib/libta-lib.so && \
     pip install --no-cache-dir TA-Lib
 

@@ -32,7 +32,7 @@ jobs:
         run: echo "${{ secrets.DOCKER_PASSWORD }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
 
       - name: Build Docker image
-        run: docker build --platform linux/amd64 -t marley2022/ihome-agents:latest .
+        run: docker build --no-cache --platform linux/amd64 -t marley2022/ihome-agents:latest .
 
       - name: Push Docker image
         run: docker push marley2022/ihome-agents:latest
