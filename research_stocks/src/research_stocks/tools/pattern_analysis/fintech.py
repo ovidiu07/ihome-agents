@@ -18,8 +18,9 @@ from pandas.tseries.offsets import BDay  # from pandas
 import yfinance as yf
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
-logging.basicConfig(level=logging.DEBUG)
+# Reduce verbosity by defaulting to INFO level
+logger.setLevel(logging.INFO)
+logging.basicConfig(level=logging.INFO)
 
 BASE_URL = "https://finnhub.io/api/v1"
 BACKOFF_FACTOR = 1.5
@@ -481,14 +482,16 @@ def fetch_all(
     "aggregate_indicator":   aggregate_indicator.dict() if aggregate_indicator else {},
   }
   technical_indicators: dict[str, Any] = {}
-  for ind in indicators:
-    try:
+  # Weekly resolution does not require the heavy technical indicator fetch
+  if resolution != "W":
+    for ind in indicators:
+      try:
         indicator_response = get_technical_indicator(symbol, ind, resolution, start, end, session=sess)
         if indicator_response:
-            for key in ("o", "h", "l", "c", "v", "t", "s"):
-              indicator_response.pop(key, None)
-            technical_indicators[ind] = indicator_response
-    except Exception as e:
+          for key in ("o", "h", "l", "c", "v", "t", "s"):
+            indicator_response.pop(key, None)
+          technical_indicators[ind] = indicator_response
+      except Exception as e:
         logger.warning(f"Failed to fetch technical indicator {ind}: {e}")
   result["technical_indicators"] = technical_indicators
 
