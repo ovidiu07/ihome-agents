@@ -8,9 +8,6 @@ services:
       dockerfile: Dockerfile
     ports:
       - "8000:8000"
-#    volumes:
-#      - ./research_stocks/src/research_stocks:/app
-#      - ./output:/app/output
-    working_dir: /app
+    working_dir: /app/research_stocks/src/research_stocks
     command: [ "python3", "main.py" ]
     restart: unless-stopped
