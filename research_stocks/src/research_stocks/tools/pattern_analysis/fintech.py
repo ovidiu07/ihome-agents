@@ -8,6 +8,7 @@ import os
 import requests
 import time
 from datetime import datetime, timedelta
+from functools import lru_cache
 from dotenv import load_dotenv
 from pathlib import Path
 from pydantic import BaseModel, Field, field_validator, RootModel
@@ -23,6 +24,24 @@ logging.basicConfig(level=logging.DEBUG)
 BASE_URL = "https://finnhub.io/api/v1"
 BACKOFF_FACTOR = 1.5
 MAX_RETRIES = 3
+
+# Load environment once on import
+load_dotenv()
+
+# Optional throttle delay between requests (seconds)
+FINNHUB_THROTTLE = float(os.getenv("FINNHUB_THROTTLE", "0"))
+
+# Track number of API calls for logging
+_API_CALL_COUNT = 0
+
+# Remember the timestamp of the last call for throttling
+_LAST_CALL_TIME = 0.0
+
+# Simple cache for technical indicators
+_TECHNICAL_CACHE: dict[tuple, dict[str, Any]] = {}
+
+# Default session used when none is provided
+_DEFAULT_SESSION = requests.Session()
 
 
 class QuoteResponse(BaseModel):
@@ -97,7 +116,6 @@ def get_company_news(
 
 def _get_token() -> str:
   """Return API token from environment or raise."""
-  load_dotenv()
   token = os.getenv("FINNHUB_TOKEN")
   if not token:
     raise ValueError("FINNHUB_TOKEN not set in environment")
@@ -110,14 +128,20 @@ def _call_finnhub(
     session: Optional[requests.Session] = None,
 ) -> Any:
   """Perform a GET request with retries and backoff."""
+  global _API_CALL_COUNT, _LAST_CALL_TIME
+
   token = _get_token()
   params = dict(params)
   params["token"] = token
-  sess = session or requests.Session()
+  sess = session or _DEFAULT_SESSION
 
   delay = 1.0
   for attempt in range(1, MAX_RETRIES + 1):
     try:
+      if FINNHUB_THROTTLE:
+        elapsed = time.monotonic() - _LAST_CALL_TIME
+        if elapsed < FINNHUB_THROTTLE:
+          time.sleep(FINNHUB_THROTTLE - elapsed)
       url = f"{BASE_URL}{path}"
       # full_url = requests.Request('GET', url, params=params).prepare().url
       # logger.debug("Finnhub request: %s", full_url)
@@ -127,7 +151,8 @@ def _call_finnhub(
       data = resp.json()
       if not data:
         raise ValueError("Empty response")
-      time.sleep(1)
+      _API_CALL_COUNT += 1
+      _LAST_CALL_TIME = time.monotonic()
       return data
     except (requests.RequestException, ValueError) as exc:
       logger.warning("Request failed (%s/%s): %s", attempt, MAX_RETRIES, exc)
@@ -271,6 +296,16 @@ def get_technical_indicator(
   if end is None:
     end = datetime.utcnow()
 
+  cache_key = (
+    symbol.upper(),
+    indicator.lower(),
+    resolution,
+    int(start.timestamp()),
+    int(end.timestamp()),
+  )
+  if cache_key in _TECHNICAL_CACHE:
+    return _TECHNICAL_CACHE[cache_key]
+
   params = {
     "symbol":     symbol.upper(),
     "indicator":  indicator.lower(),
@@ -358,6 +393,7 @@ def get_technical_indicator(
   if data.get("s") == "no_data":
     return None
 
+  _TECHNICAL_CACHE[cache_key] = data
   return data
 
 
@@ -367,11 +403,33 @@ def fetch_all(
     lookback_days: int = 2,
     save_path: str | Path = Path("data"),
     session: Optional[requests.Session] = None,
+    dry_run: bool = False,
 ) -> Path:
   """High-level façade to fetch & save all endpoints."""
+  global _API_CALL_COUNT
   eastern = pytz.timezone("US/Eastern")
   now_utc = datetime.utcnow()
   now_et = now_utc.astimezone(eastern)
+
+  if dry_run:
+    logger.info("Dry-run enabled - skipping Finnhub calls for %s", symbol)
+    result = {
+      "symbol": symbol.upper(),
+      "resolution": resolution,
+      "last_updated_utc": datetime.utcnow().isoformat() + "Z",
+      "candles": {},
+      "patterns": [],
+      "support_resistance": {},
+      "aggregate_indicator": {},
+      "technical_indicators": {},
+    }
+    path = Path(save_path)
+    path.mkdir(parents=True, exist_ok=True)
+    outfile = path / f"{symbol.upper()}_analysis_{resolution}.json"
+    with outfile.open("w", encoding="utf-8") as f:
+      json.dump(result, f, indent=2)
+    logger.info("Saved analysis to %s", outfile)
+    return outfile
 
   # Determine ending timestamp based on resolution and market days
   if resolution in ("1", "5"):
@@ -406,10 +464,12 @@ def fetch_all(
   ]
 
 
-  candles = get_candles(symbol, resolution, start, end, session)
-  patterns = get_pattern_recognition(symbol,resolution, session)
-  support_resistance = get_support_resistance(symbol,resolution, session)
-  aggregate_indicator = get_aggregate_indicator(symbol, resolution, session)
+  sess = session or requests.Session()
+
+  candles = get_candles(symbol, resolution, start, end, sess)
+  patterns = get_pattern_recognition(symbol, resolution, sess)
+  support_resistance = get_support_resistance(symbol, resolution, sess)
+  aggregate_indicator = get_aggregate_indicator(symbol, resolution, sess)
 
   result = {
     "symbol":                symbol.upper(),
@@ -423,7 +483,7 @@ def fetch_all(
   technical_indicators: dict[str, Any] = {}
   for ind in indicators:
     try:
-        indicator_response = get_technical_indicator(symbol, ind, resolution, start, end, session=session)
+        indicator_response = get_technical_indicator(symbol, ind, resolution, start, end, session=sess)
         if indicator_response:
             for key in ("o", "h", "l", "c", "v", "t", "s"):
               indicator_response.pop(key, None)
@@ -438,6 +498,8 @@ def fetch_all(
   with outfile.open("w", encoding="utf-8") as f:
     json.dump(result, f, indent=2)
   logger.info("Saved analysis to %s", outfile)
+  logger.info("Finnhub API calls for %s: %d", symbol.upper(), _API_CALL_COUNT)
+  _API_CALL_COUNT = 0
   return outfile
 
 
