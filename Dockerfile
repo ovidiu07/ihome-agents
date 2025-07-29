@@ -27,13 +27,13 @@ ENV TA_LIBRARY_PATH=/usr/lib
 
 RUN test -f /usr/lib/libta_lib.so && echo "TA-Lib C library is in place ✅"
 
-#RUN ln -s /usr/lib/libta_lib.so /usr/lib/libta-lib.so && \
-#    pip install --no-cache-dir TA-Lib
+RUN ln -s /usr/lib/libta_lib.so /usr/lib/libta-lib.so && \
+    pip install --no-cache-dir TA-Lib==0.4.0
 
 # Build TA-Lib Python bindings manually
-RUN git clone https://github.com/mrjbq7/ta-lib.git && \
-    cd ta-lib && python3 setup.py build && python3 setup.py install && \
-    cd .. && rm -rf ta-lib \
+#RUN git clone https://github.com/mrjbq7/ta-lib.git && \
+#    cd ta-lib && python3 setup.py build && python3 setup.py install && \
+#    cd .. && rm -rf ta-lib \
 
 # Then install the rest
 RUN pip install --no-cache-dir -r requirements.txt
