@@ -5,6 +5,11 @@ services:
     image: marley2022/ihome-agents:latest
     ports:
       - "8000:8000"
+    environment:
+      - FINNHUB_TOKEN=${FINNHUB_TOKEN}
+      - S3_BUCKET=${S3_BUCKET}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
     working_dir: /app/research_stocks/src/research_stocks
     command: [ "python3", "main.py" ]
     restart: unless-stopped
