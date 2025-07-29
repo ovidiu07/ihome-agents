@@ -2,29 +2,31 @@
 
 from __future__ import annotations
 
+import boto3
 import json
 import logging
 import os
 import re
+from apscheduler.schedulers.background import BackgroundScheduler
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
-from pathlib import Path
-
-import boto3
-from apscheduler.schedulers.background import BackgroundScheduler
+from dotenv import load_dotenv
 from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from pathlib import Path
 from pytz import timezone
 
 from crew import StockAnalysisCrew
 from tools.run_analysis import main as run_pattern_analysis
+
 # FOR DOCKER
 # from .crew import StockAnalysisCrew
 # from ..tools.run_analysis import main as run_pattern_analysis
 
-from dotenv import load_dotenv
 load_dotenv()
+
+
 def run_analysis_and_crew(symbol: str, is_general_analysis: bool = True) -> str:
   """
   Run the pattern analysis and then the crew for the given symbol.
@@ -57,6 +59,7 @@ def safe_run(symbol: str, is_general_analysis: bool = True) -> str:
     logging.error(f"Critical error in execution: {e}")
     return generate_fallback_report()
 
+
 # ─── Globals ──────────────────────────────────────────────────────────────
 
 LOCAL_TZ = timezone("Europe/Bucharest")
@@ -65,7 +68,6 @@ S3_BUCKET = os.getenv("S3_BUCKET", "devtailor-transactions")
 
 # Store submitted symbols per day in memory
 DAILY_SYMBOLS: dict[str, list[str]] = {}
-
 
 # ─── FastAPI setup ─────────────────────────────────────────────────────────
 
@@ -78,14 +80,15 @@ def index(request: Request) -> HTMLResponse:
   """Render the symbol submission form."""
   today = datetime.now(LOCAL_TZ).strftime("%Y-%m-%d")
   symbols = DAILY_SYMBOLS.get(today, [])
-  return templates.TemplateResponse(
-      "index.html", {"request": request, "symbols": symbols})
+  return templates.TemplateResponse("index.html",
+      {"request": request, "symbols": symbols})
 
 
 @app.post("/submit")
 def submit_symbols(symbols: str = Form(...)) -> RedirectResponse:
   """Store the submitted symbols for today's date."""
-  symbol_list = [s.strip().upper() for s in re.split(r"[,\s]+", symbols) if s.strip()]
+  symbol_list = [s.strip().upper() for s in re.split(r"[,\s]+", symbols) if
+                 s.strip()]
   today = datetime.now(LOCAL_TZ).strftime("%Y-%m-%d")
   DAILY_SYMBOLS[today] = symbol_list
   return RedirectResponse("/", status_code=303)
@@ -120,12 +123,8 @@ def process_today_symbols(is_general_analysis: bool = True) -> None:
       result_path = Path("output") / f"pattern_analysis_results_{sym}.json"
       if result_path.exists():
         with open(result_path, "rb") as fh:
-          s3_client.put_object(
-              Bucket=S3_BUCKET,
-              Key=f"{run_time}/{sym}.json",
-              Body=fh.read(),
-              ContentType="application/json",
-          )
+          s3_client.put_object(Bucket=S3_BUCKET, Key=f"{run_time}/{sym}.json",
+              Body=fh.read(), ContentType="application/json", )
         print(f"Uploaded results for {sym} to s3://{S3_BUCKET}/{run_time}/")
       else:
         logging.warning("Result JSON for %s not found", sym)
@@ -134,7 +133,8 @@ def process_today_symbols(is_general_analysis: bool = True) -> None:
 
   # Process symbols in parallel
   # Use max_workers to control the level of parallelism
-  max_workers = min(10, len(symbols))  # Limit to 10 concurrent workers or number of symbols, whichever is smaller
+  max_workers = min(10, len(
+    symbols))  # Limit to 10 concurrent workers or number of symbols, whichever is smaller
   with ThreadPoolExecutor(max_workers=max_workers) as executor:
     # Use list() to ensure all futures are completed before function returns
     list(executor.map(process_symbol, symbols))
@@ -145,31 +145,29 @@ def start_scheduler() -> BackgroundScheduler:
   scheduler = BackgroundScheduler(timezone=LOCAL_TZ)
 
   # General analysis times (15:00 and 16:00)
-  general_analysis_times = [(11, 50),(15, 0), (16, 0)]
+  general_analysis_times = [(15, 0), (16, 0)]
   for hour, minute in general_analysis_times:
-    scheduler.add_job(
-        process_today_symbols,
-        "cron",
-        day_of_week="mon-fri",
-        hour=hour,
-        minute=minute,
-        kwargs={"is_general_analysis": True},
-    )
+    scheduler.add_job(process_today_symbols, "cron", day_of_week="mon-fri",
+        hour=hour, minute=minute, kwargs={"is_general_analysis": True}, )
 
   # Intraday analysis times (17:00, 18:30, and 19:30)
-  intraday_analysis_times = [(17, 0), (17, 45), (18, 0),(18, 30), (19, 30)]
+  intraday_analysis_times = [(17, 0), (17, 45), (18, 0), (18, 30), (19, 30)]
   for hour, minute in intraday_analysis_times:
-    scheduler.add_job(
-        process_today_symbols,
-        "cron",
-        day_of_week="mon-fri",
-        hour=hour,
-        minute=minute,
-        kwargs={"is_general_analysis": False},
-    )
+    scheduler.add_job(process_today_symbols, "cron", day_of_week="mon-fri",
+        hour=hour, minute=minute, kwargs={"is_general_analysis": False}, )
 
   scheduler.start()
   return scheduler
+
+
+# To trigger manually the service, go to http://0.0.0.0:8000/
+# Then make a GET request to "http://localhost:8000/run-now?is_general=true"
+@app.get("/run-now")
+def manual_run(is_general: bool = True):
+  """Manually trigger analysis for today's submitted symbols."""
+  process_today_symbols(is_general_analysis=is_general)
+  return {"status": "Triggered",
+          "type": "general" if is_general else "intraday"}
 
 
 @app.on_event("startup")
