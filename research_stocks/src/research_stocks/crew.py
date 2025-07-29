@@ -815,9 +815,9 @@ class StockAnalysisCrew:
       from tools.pattern_analysis.fintech import get_company_news
       from datetime import datetime, timedelta
 
-      start = datetime.utcnow() - timedelta(days=1)
-      end = datetime.utcnow()
-      news_items = get_company_news(symbol, start, end)
+      # start = datetime.utcnow() - timedelta(days=1)
+      # end = datetime.utcnow()
+      # news_items = get_company_news(symbol, start, end)
       print(f"Creating json file for symbol: {symbol}...")
       results_path = Path("output") / f"pattern_analysis_results_{symbol}.json"
       try:
@@ -833,7 +833,7 @@ class StockAnalysisCrew:
       logging.warning("Failed to append company news: %s", exc)
 
     # ── Step 3: Merge any remaining harvested headlines ───────────────────
-    self.merge_news_into_results()
+    #self.merge_news_into_results()
 
     # ── Step 4: Queue up forecast enhancement if available ───────────────
     tasks: list[Task] = []

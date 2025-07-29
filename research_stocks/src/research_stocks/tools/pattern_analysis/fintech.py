@@ -147,8 +147,10 @@ def _call_finnhub(
       # full_url = requests.Request('GET', url, params=params).prepare().url
       # logger.debug("Finnhub request: %s", full_url)
       resp = sess.get(url, params=params, timeout=20)
-      if resp.status_code == 422:
+      # Gracefully handle “no data” (422) and server errors (500)
+      if resp.status_code in (422, 500):
         return None
+
       if resp.status_code >= 400:
         raise requests.HTTPError(f"{resp.status_code} error: {resp.text}", response=resp)
       data = resp.json()
