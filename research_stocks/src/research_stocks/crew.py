@@ -20,8 +20,6 @@ from urllib.parse import quote_plus  # ← NEW
 from tools.pattern_analysis.fintech import fetch_all
 from tools.pattern_analysis.forecasting import next_prediction_from_finnhub
 
-from tools.market_data_tools import (PoliticalNewsTool, MarkdownFormatterTool,
-                                     GrammarCheckTool)
 
 # Load environment variables from .env file
 load_dotenv()
@@ -222,7 +220,6 @@ def harvest_data_offline(symbols: list[str], days_back: int = 3) -> list[dict]:
     raise ValueError("symbols list is empty")
 
   symbol = symbols[0]  # NewsAPI can't do multiple tickers well
-  tool = PoliticalNewsTool()
 
   # split FINANCE_TERMS into equal chunks
   n_chunks = math.ceil(len(FINANCE_TERMS) / CHUNK_SIZE)
@@ -393,7 +390,7 @@ class StockAnalysisCrew:
         Agent: A configured Agent instance with the PoliticalNewsTool for data collection.
     """
     return Agent(config=self.agents_yaml()["data_harvester"], verbose=True,
-                 llm=get_appropriate_llm("low"), tools=[PoliticalNewsTool()])
+                 llm=get_appropriate_llm("low"))
 
   @agent
   def report_composer_agent(self) -> Agent:
@@ -409,8 +406,7 @@ class StockAnalysisCrew:
         Agent: A configured Agent instance with MarkdownFormatterTool and GrammarCheckTool.
     """
     return Agent(config=self.agents_yaml()["report_composer"], verbose=True,
-                 llm=get_appropriate_llm("low"),
-                 tools=[MarkdownFormatterTool(), GrammarCheckTool()])
+                 llm=get_appropriate_llm("low"))
 
   @agent
   def forecast_enhancer_agent(self) -> Agent:
@@ -738,8 +734,6 @@ class StockAnalysisCrew:
       raise ValueError("No valid symbol provided for market brief")
 
     # harvest_data_offline expects a list of symbols
-    harvest_data_offline([symbol], days_back=1)
-
     try:
       # Always fetch intraday data
       fintech_one_minute = fetch_all(symbol, resolution="1", lookback_days=1,
