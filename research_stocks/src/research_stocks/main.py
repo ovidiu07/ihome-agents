@@ -176,4 +176,4 @@ def on_shutdown() -> None:
 if __name__ == "__main__":
   import uvicorn
 
-  uvicorn.run("research_stocks.main:app", host="0.0.0.0", port=8000)
+  uvicorn.run(app, host="0.0.0.0", port=8000)
