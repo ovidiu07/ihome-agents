@@ -11,3 +11,4 @@ APScheduler>=3.10
 pytz>=2024.1
 crewai>=0.16.1
 crewai-tools
+python-multipart
