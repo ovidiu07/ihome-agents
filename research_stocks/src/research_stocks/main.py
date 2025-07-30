@@ -19,7 +19,7 @@ from pytz import timezone
 
 from crew import StockAnalysisCrew
 from tools.run_analysis import main as run_pattern_analysis
-from s3_gpt_analysis import handler as gpt_handler
+from .lambda_functions.s3_gpt_analysis import handler as gpt_handler
 
 # FOR DOCKER
 # from .crew import StockAnalysisCrew

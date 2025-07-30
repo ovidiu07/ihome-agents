@@ -2,14 +2,16 @@ import json
 import logging
 import os
 from datetime import datetime, timezone
-
+from fastapi import FastAPI, Form, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.templating import Jinja2Templates
 import boto3
 import requests
 from botocore.exceptions import ClientError
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
-
+app = FastAPI()
 s3_client = boto3.client("s3")
 
 def generate_presigned_url(bucket: str, key: str, expiration: int = 300) -> str:
@@ -28,7 +30,7 @@ def generate_presigned_url(bucket: str, key: str, expiration: int = 300) -> str:
 
 def call_gpt_action(file_url: str, filename: str) -> dict:
     """Call the GPT Action endpoint with the provided file URL and filename."""
-    endpoint = os.environ.get("GPT_ACTION_URL")
+    endpoint = "/agent-analysis"
     if not endpoint:
         raise RuntimeError("GPT_ACTION_URL environment variable not set")
 
@@ -81,7 +83,7 @@ def handler(event, context):
     # Build analysis object key
     date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     filename = os.path.basename(key)
-    analysis_key = f"analysis/{date_str}-{filename}.txt"
+    analysis_key = f"analysis/{date_str}-{filename}.md"
 
     # Save analysis result to S3
     save_analysis(bucket, analysis_key, analysis_text)

@@ -1,0 +1,46 @@
+openapi: 3.0.1
+info:
+  title: S3 File Analysis
+  description: Accepts a file URL and filename, performs analysis, and returns a structured result.
+  version: 1.0.0
+servers:
+  - url: http://95.179.168.244:8000/
+paths:
+  /agent-analysis:
+    post:
+      summary: Analyze uploaded S3 file
+      operationId: analyzeFile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - file_url
+                - filename
+              properties:
+                file_url:
+                  type: string
+                  format: uri
+                  description: Presigned S3 URL pointing to the uploaded file
+                filename:
+                  type: string
+                  description: Name of the file (used for logging or file-type logic)
+      responses:
+        '200':
+          description: Analysis result returned from GPT
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - analysis
+                properties:
+                  analysis:
+                    type: string
+                    description: GPT-generated analysis or summary of the file
+        '400':
+          description: Invalid input
+        '500':
+          description: Internal processing error
