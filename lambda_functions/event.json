@@ -3,7 +3,7 @@
     {
       "s3": {
         "bucket": {
-          "name": "example-bucket"
+          "name": "devtailor-transactions"
         },
         "object": {
           "key": "uploads/test-file.txt"
