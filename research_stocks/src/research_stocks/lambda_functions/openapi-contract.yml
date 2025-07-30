@@ -4,7 +4,7 @@ info:
   description: Accepts a file URL and filename, performs analysis, and returns a structured result.
   version: 1.0.0
 servers:
-  - url: http://95.179.168.244:8000/
+  - url: https://95.179.168.244:8000/
 paths:
   /agent-analysis:
     post:
