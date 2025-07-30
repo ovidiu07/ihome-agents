@@ -19,6 +19,7 @@ from pytz import timezone
 
 from crew import StockAnalysisCrew
 from tools.run_analysis import main as run_pattern_analysis
+from s3_gpt_analysis import handler as gpt_handler
 
 # FOR DOCKER
 # from .crew import StockAnalysisCrew
@@ -122,10 +123,42 @@ def process_today_symbols(is_general_analysis: bool = True) -> None:
       safe_run(sym, is_general_analysis)
       result_path = Path("output") / f"pattern_analysis_results_{sym}.json"
       if result_path.exists():
+        uploaded_key = f"{run_time}/{sym}.json"
         with open(result_path, "rb") as fh:
-          s3_client.put_object(Bucket=S3_BUCKET, Key=f"{run_time}/{sym}.json",
-              Body=fh.read(), ContentType="application/json", )
+          s3_client.put_object(
+              Bucket=S3_BUCKET,
+              Key=uploaded_key,
+              Body=fh.read(),
+              ContentType="application/json",
+          )
         print(f"Uploaded results for {sym} to s3://{S3_BUCKET}/{run_time}/")
+
+        # Invoke GPT analysis handler for the uploaded file
+        try:
+          event = {
+              "Records": [
+                  {
+                      "s3": {
+                          "bucket": {"name": S3_BUCKET},
+                          "object": {"key": uploaded_key},
+                      }
+                  }
+              ]
+          }
+          response = gpt_handler(event, None)
+          analysis_key = None
+          if isinstance(response, dict):
+            body = response.get("body")
+            if body:
+              try:
+                analysis_key = json.loads(body).get("analysis_key")
+              except Exception as parse_exc:
+                logging.warning(
+                    "Failed to parse GPT handler response for %s: %s", sym, parse_exc
+                )
+          logging.info("GPT analysis stored for %s at %s", sym, analysis_key)
+        except Exception as handler_exc:
+          logging.warning("GPT handler failed for %s: %s", sym, handler_exc)
       else:
         logging.warning("Result JSON for %s not found", sym)
     except Exception as e:
