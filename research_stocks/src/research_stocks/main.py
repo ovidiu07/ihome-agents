@@ -76,7 +76,7 @@ app = FastAPI()
 templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
 
 
-@app.get("/", response_class=HTMLResponse)
+@app.get("/agent-analysis", response_class=HTMLResponse)
 def index(request: Request) -> HTMLResponse:
   """Render the symbol submission form."""
   today = datetime.now(LOCAL_TZ).strftime("%Y-%m-%d")
