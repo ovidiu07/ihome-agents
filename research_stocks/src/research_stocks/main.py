@@ -92,7 +92,7 @@ def submit_symbols(symbols: str = Form(...)) -> RedirectResponse:
                  s.strip()]
   today = datetime.now(LOCAL_TZ).strftime("%Y-%m-%d")
   DAILY_SYMBOLS[today] = symbol_list
-  return RedirectResponse("/", status_code=303)
+  return RedirectResponse("/forecast", status_code=303)
 
 
 # ─── Forecast logic & scheduler ────────────────────────────────────────────
