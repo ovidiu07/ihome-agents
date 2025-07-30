@@ -76,7 +76,7 @@ app = FastAPI()
 templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
 
 
-@app.get("/", response_class=HTMLResponse)
+@app.get("/forecast", response_class=HTMLResponse)
 def index(request: Request) -> HTMLResponse:
   """Render the symbol submission form."""
   today = datetime.now(LOCAL_TZ).strftime("%Y-%m-%d")
@@ -216,4 +216,4 @@ def on_shutdown() -> None:
 if __name__ == "__main__":
   import uvicorn
 
-  uvicorn.run(app, host="0.0.0.0", port=8000)
+  uvicorn.run(app, host="0.0.0.0", port=8080)
