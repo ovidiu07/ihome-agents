@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 from functools import lru_cache
 from pathlib import Path
 from urllib.parse import quote_plus  # ← NEW
-
+from datetime import datetime, timezone
 from lambda_functions.s3_gpt_analysis import call_gpt_action_with_json_content
 from lambda_functions.s3_gpt_analysis import save_analysis
 from tools.pattern_analysis.fintech import fetch_all
