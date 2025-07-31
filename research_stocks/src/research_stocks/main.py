@@ -11,11 +11,12 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from dotenv import load_dotenv
-from fastapi import FastAPI, Form, Request
+from fastapi import FastAPI, Form, Request, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pathlib import Path
 from pytz import timezone
+from pydantic import BaseModel
 
 from crew import StockAnalysisCrew
 from tools.run_analysis import main as run_pattern_analysis
@@ -74,6 +75,24 @@ DAILY_SYMBOLS: dict[str, list[str]] = {}
 
 app = FastAPI()
 templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
+
+class AnalysisRequest(BaseModel):
+  file_url: str
+  filename: str
+
+@app.post("/agent-analysis")
+async def agent_analysis(request: AnalysisRequest):
+  logger.info(f"Received /agent-analysis request for file: {request.filename}")
+  try:
+    # Call GPT Action logic here directly or delegate
+    result = call_gpt_action(request.file_url, request.filename)
+    analysis_text = result.get("analysis")
+    if analysis_text is None:
+      raise HTTPException(status_code=500, detail="Missing 'analysis' in GPT response")
+    return {"analysis": analysis_text}
+  except Exception as e:
+    logger.error(f"Error processing /agent-analysis: {e}")
+    raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/forecast", response_class=HTMLResponse)
