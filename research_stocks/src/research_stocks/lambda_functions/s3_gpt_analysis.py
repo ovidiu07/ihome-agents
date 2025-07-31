@@ -52,8 +52,7 @@ def call_gpt_action(file_url: str, filename: str) -> str:
                           f"JSON provided in file following all instructions.Output Sections exactly as specified."}]
   response = client.chat.completions.create(
       model="o3",
-      messages=messages,
-      temperature=0.0,
+      messages=messages
   )
   logger.info("o3 model responded with finish_reason=%s",
               response.choices[0].finish_reason)
