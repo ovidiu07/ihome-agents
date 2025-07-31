@@ -30,13 +30,14 @@ def generate_presigned_url(bucket: str, key: str, expiration: int = 300) -> str:
 
 def call_gpt_action(file_url: str, filename: str) -> dict:
     """Call the GPT Action endpoint with the provided file URL and filename."""
+    BASE_URL = "https://go-sweet.ro"
     endpoint = "/agent-analysis"
     if not endpoint:
         raise RuntimeError("GPT_ACTION_URL environment variable not set")
 
     payload = {"file_url": file_url, "filename": filename}
     try:
-        response = requests.post(endpoint, json=payload, timeout=30)
+        response = requests.post(BASE_URL+endpoint, json=payload, timeout=30)
         response.raise_for_status()
         logger.info("GPT Action responded with status %s", response.status_code)
         return response.json()
