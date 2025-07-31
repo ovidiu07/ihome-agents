@@ -126,8 +126,8 @@ def handler(event, context):
   #   raise RuntimeError("Missing analysis in GPT Action response")
   #
   # # Build analysis object key
-  # date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-  # filename = os.path.basename(key)
+  date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+  filename = os.path.basename(key)
   analysis_key = f"analysis/{date_str}-{filename}.md"
   #
   # # Save analysis result to S3
