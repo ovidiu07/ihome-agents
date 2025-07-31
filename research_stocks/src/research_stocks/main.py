@@ -174,13 +174,13 @@ def start_scheduler() -> BackgroundScheduler:
   scheduler = BackgroundScheduler(timezone=LOCAL_TZ)
 
   # General analysis times (15:00 and 16:00)
-  general_analysis_times = [(15, 0), (16, 0), (16, 30)]
+  general_analysis_times = [(13, 0), (14, 0), (15, 0), (15, 30), (16, 0), (16, 30)]
   for hour, minute in general_analysis_times:
     scheduler.add_job(process_today_symbols, "cron", day_of_week="mon-fri",
         hour=hour, minute=minute, kwargs={"is_general_analysis": True}, )
 
   # Intraday analysis times (17:00, 18:30, and 19:30)
-  intraday_analysis_times = [(17, 0), (17, 45), (18, 0), (18, 30), (19, 30)]
+  intraday_analysis_times = [(17, 0), (17, 45), (18, 0), (18, 30), (19, 0), (19, 30), (20, 0), (20, 30), (21, 0), (21, 30), (22, 0), (22, 30)]
   for hour, minute in intraday_analysis_times:
     scheduler.add_job(process_today_symbols, "cron", day_of_week="mon-fri",
         hour=hour, minute=minute, kwargs={"is_general_analysis": False}, )
