@@ -1,8 +1,8 @@
 # import agentops
 import json
+import logging
 import math  # ← NEW
 import yaml
-import logging
 from crewai import Agent, Crew, Process, Task
 from crewai.project import CrewBase, agent, crew, task
 from crewai_tools import WebsiteSearchTool, ScrapeWebsiteTool, TXTSearchTool
@@ -10,16 +10,18 @@ from dotenv import load_dotenv
 from functools import lru_cache
 from pathlib import Path
 from urllib.parse import quote_plus  # ← NEW
+
+from lambda_functions.s3_gpt_analysis import call_gpt_action_with_json_content
+from lambda_functions.s3_gpt_analysis import save_analysis
+from tools.pattern_analysis.fintech import fetch_all
+from tools.pattern_analysis.forecasting import next_prediction_from_finnhub
+
 # FOR DOCKER
 # from research_stocks.tools.pattern_analysis.fintech import fetch_all
 # from research_stocks.tools.pattern_analysis.forecasting import next_prediction_from_finnhub
 #
 # from research_stocks.tools.market_data_tools import (PoliticalNewsTool, MarkdownFormatterTool,
 #                                      GrammarCheckTool)
-
-from tools.pattern_analysis.fintech import fetch_all
-from tools.pattern_analysis.forecasting import next_prediction_from_finnhub
-
 
 # Load environment variables from .env file
 load_dotenv()
@@ -47,19 +49,20 @@ report_llm = LLM(model="openai/gpt-4", temperature=0.8, max_tokens=2048,
 # ------------------------------------------------------------------ #
 # 100 high-profile tickers → headline aliases                        #
 # ------------------------------------------------------------------ #
-SYMBOL_ALIASES = {# 1‒10
+SYMBOL_ALIASES = {  # 1‒10
   "AAPL": ["AAPL", "Apple Inc", "Apple Incorporated", "Apple"],
   "MSFT": ["MSFT", "Microsoft Corp", "Microsoft Corporation", "Microsoft"],
-  "GOOGL": ["GOOGL", "Alphabet Inc", "Alphabet Class A", "Google LLC", "Google"],
+  "GOOGL": ["GOOGL", "Alphabet Inc", "Alphabet Class A", "Google LLC",
+            "Google"],
   "GOOG": ["GOOG", "Alphabet Inc", "Alphabet Class C", "Google LLC", "Google"],
   "AMZN": ["AMZN", "Amazon.com Inc", "Amazon.com", "Amazon"],
   "TSLA": ["TSLA", "Tesla Inc", "Tesla Motors", "Tesla"],
   "NVDA": ["NVDA", "NVIDIA Corporation", "NVIDIA Corp", "Nvidia"],
-  "META": ["META", "Meta Platforms Inc", "Meta Platforms", "Facebook Inc", "Facebook"],
+  "META": ["META", "Meta Platforms Inc", "Meta Platforms", "Facebook Inc",
+           "Facebook"],
   "BRK.A": ["BRK.A", "Berkshire Hathaway Inc Class A", "Berkshire Hathaway"],
   "BRK.B": ["BRK.B", "Berkshire Hathaway Inc Class B", "Berkshire Hathaway"],
-  "V": ["V", "Visa Inc", "Visa"],
-  "MA": ["MA", "MasterCard Inc", "Mastercard"],
+  "V": ["V", "Visa Inc", "Visa"], "MA": ["MA", "MasterCard Inc", "Mastercard"],
   "JPM": ["JPM", "JPMorgan Chase", "J.P. Morgan", "JPMorgan"],
   "JNJ": ["JNJ", "Johnson & Johnson", "J&J"],
   "WMT": ["WMT", "Walmart", "Wal-Mart Stores", "Wal-Mart"],
@@ -344,7 +347,8 @@ class StockAnalysisCrew:
     Returns:
         dict: A dictionary containing the agent configurations.
     """
-    if isinstance(self.agents_config, dict):  # Avoid re-parsing if already a dict
+    if isinstance(self.agents_config,
+                  dict):  # Avoid re-parsing if already a dict
       return self.agents_config
     with open(Path(self.agents_config), "r") as f:
       return yaml.safe_load(f)  # Parse YAML into Python dictionary
@@ -360,7 +364,8 @@ class StockAnalysisCrew:
     Returns:
         dict: A dictionary containing the task configurations.
     """
-    if isinstance(self.tasks_config, dict):  # Avoid re-parsing if already a dict
+    if isinstance(self.tasks_config,
+                  dict):  # Avoid re-parsing if already a dict
       return self.tasks_config
     with open(Path(self.tasks_config), "r") as f:
       return yaml.safe_load(f)  # Parse YAML into Python dictionary
@@ -683,7 +688,7 @@ class StockAnalysisCrew:
       results = {}
 
     # Add the news headlines to the results
-    #results["news_headlines"] = news
+    # results["news_headlines"] = news
 
     # Ensure the output directory exists
     results_path.parent.mkdir(parents=True, exist_ok=True)
@@ -737,20 +742,20 @@ class StockAnalysisCrew:
     try:
       # Always fetch intraday data
       fintech_one_minute = fetch_all(symbol, resolution="1", lookback_days=1,
-                                  save_path="output")
+                                     save_path="output")
       fintech_five_minutes = fetch_all(symbol, resolution="5", lookback_days=1,
-                                     save_path="output")
-      fintech_fifteen_minutes = fetch_all(symbol, resolution="15", lookback_days=1,
-                                     save_path="output")
+                                       save_path="output")
+      fintech_fifteen_minutes = fetch_all(symbol, resolution="15",
+                                          lookback_days=1, save_path="output")
       fintech_hourly = fetch_all(symbol, resolution="60", lookback_days=3,
                                  save_path="output")
 
       # Fetch daily and weekly data only for general analysis
       if is_general_analysis:
         fintech_daily = fetch_all(symbol, resolution="D", lookback_days=14,
-                                save_path="output")
-        fintech_weekly = fetch_all(symbol, resolution="W", lookback_days=14,
                                   save_path="output")
+        fintech_weekly = fetch_all(symbol, resolution="W", lookback_days=14,
+                                   save_path="output")
       else:
         fintech_daily = None
         fintech_weekly = None
@@ -774,41 +779,47 @@ class StockAnalysisCrew:
     print(f"Starting to fetch information for symbol: {symbol}...")
     # Load fetched intraday fintech data
     if fintech_one_minute:
-      fintech_data_one_minute = json.loads(fintech_one_minute.read_text(encoding="utf-8"))
+      fintech_data_one_minute = json.loads(
+        fintech_one_minute.read_text(encoding="utf-8"))
       results["fintech_one_minute"] = fintech_data_one_minute
 
     if fintech_five_minutes:
-      fintech_data_five_minutes = json.loads(fintech_five_minutes.read_text(encoding="utf-8"))
+      fintech_data_five_minutes = json.loads(
+        fintech_five_minutes.read_text(encoding="utf-8"))
       results["fintech_five_minutes"] = fintech_data_five_minutes
 
     if fintech_fifteen_minutes:
-      fintech_data_fifteen_minutes = json.loads(fintech_fifteen_minutes.read_text(encoding="utf-8"))
+      fintech_data_fifteen_minutes = json.loads(
+        fintech_fifteen_minutes.read_text(encoding="utf-8"))
       results["fintech_fifteen_minutes"] = fintech_data_fifteen_minutes
 
     if fintech_hourly:
-      fintech_data_hourly = json.loads(fintech_hourly.read_text(encoding="utf-8"))
+      fintech_data_hourly = json.loads(
+        fintech_hourly.read_text(encoding="utf-8"))
       results["fintech_hourly"] = fintech_data_hourly
 
     # Load daily and weekly data only for general analysis
     if is_general_analysis:
       if fintech_daily:
-        fintech_data_daily = json.loads(fintech_daily.read_text(encoding="utf-8"))
+        fintech_data_daily = json.loads(
+          fintech_daily.read_text(encoding="utf-8"))
         results["fintech_daily"] = fintech_data_daily
 
       if fintech_weekly:
-        fintech_data_weekly = json.loads(fintech_weekly.read_text(encoding="utf-8"))
+        fintech_data_weekly = json.loads(
+          fintech_weekly.read_text(encoding="utf-8"))
         results["fintech_weekly"] = fintech_data_weekly
 
     # Compute immediate forecast from raw Finnhub payload
     try:
       print(f"Writing next prediction for symbol: {symbol}...")
-      results["next_prediction_from_finnhub"] = next_prediction_from_finnhub(results)
+      results["next_prediction_from_finnhub"] = next_prediction_from_finnhub(
+        results)
     except Exception as exc:
       logging.warning("Failed to build next_prediction: %s", exc)
 
     results_path.parent.mkdir(parents=True, exist_ok=True)
-    results_path.write_text(
-        json.dumps(results, indent=2), encoding="utf-8")
+    results_path.write_text(json.dumps(results, indent=2), encoding="utf-8")
 
     # ── Step 2: Pull company‐specific news via Finnhub and append ────────
     try:
@@ -826,14 +837,27 @@ class StockAnalysisCrew:
         results = {}
 
       # Serialize Pydantic news items
-      #results["company_news"] = [item.dict() for item in news_items]
+      # results["company_news"] = [item.dict() for item in news_items]
       results_path.parent.mkdir(parents=True, exist_ok=True)
       results_path.write_text(json.dumps(results, indent=2), encoding="utf-8")
+      result = call_gpt_action_with_json_content(results, symbol)
+      analysis_text = result
+      if analysis_text is None:
+        logger.error("GPT Action response missing 'analysis' field: %s", result)
+        raise RuntimeError("Missing analysis in GPT Action response")
+
+      # Build analysis object key
+      date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+      filename = os.path.basename(key)
+      analysis_key = f"analysis/{date_str}-{filename}.md"
+
+      # Save analysis result to S3
+      save_analysis("devtailor-transactions", analysis_key, analysis_text)
     except Exception as exc:
       logging.warning("Failed to append company news: %s", exc)
 
     # ── Step 3: Merge any remaining harvested headlines ───────────────────
-    #self.merge_news_into_results()
+    # self.merge_news_into_results()
 
     # ── Step 4: Queue up forecast enhancement if available ───────────────
     tasks: list[Task] = []
