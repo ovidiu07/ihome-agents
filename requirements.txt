@@ -13,3 +13,4 @@ crewai>=0.16.1
 crewai-tools
 python-multipart
 requests
+openai>=1.0.0

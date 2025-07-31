@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from openai import OpenAI
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -42,14 +43,18 @@ def load_system_instructions() -> str:
 
 def call_gpt_action(file_url: str, filename: str) -> str:
   """Call the OpenAI o3 model with system instructions and file URL."""
+  client = OpenAI()
   SYSTEM_INSTRUCTIONS = load_system_instructions()
   messages = [{"role": "system", "content": SYSTEM_INSTRUCTIONS},
               {"role": "user",
                "content": f"Analyze the JSON file at this URL:\n{file_url}\nFilename: {filename}"
                           f"Please enhance the forecast using the multi‑timeframe technical "
                           f"JSON provided in file following all instructions.Output Sections exactly as specified."}]
-  response = openai.ChatCompletion.create(model="o3", messages=messages,
-                                          temperature=0.0)
+  response = client.chat.completions.create(
+      model="o3",
+      messages=messages,
+      temperature=0.0,
+  )
   logger.info("o3 model responded with finish_reason=%s",
               response.choices[0].finish_reason)
   return response.choices[0].message.content
