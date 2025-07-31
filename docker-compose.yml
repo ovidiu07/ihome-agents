@@ -4,7 +4,7 @@ services:
   app:
     image: marley2022/ihome-agents:latest
     ports:
-      - "8000:8000"
+      - "8080:8080"
     environment:
       - FINNHUB_TOKEN=${FINNHUB_TOKEN}
       - S3_BUCKET=${S3_BUCKET}
