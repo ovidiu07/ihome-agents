@@ -43,21 +43,31 @@ def load_system_instructions() -> str:
 
 
 def call_gpt_action(file_url: str, filename: str) -> str:
-  """Call the OpenAI o3 model with system instructions and file URL."""
+  """Call the OpenAI o3 model with system instructions and JSON content directly."""
   client = OpenAI()
   SYSTEM_INSTRUCTIONS = load_system_instructions()
-  messages = [{"role": "system", "content": SYSTEM_INSTRUCTIONS},
-              {"role": "user", "content": (
-                f"Here is the presigned S3 URL where the JSON is located:\n{file_url}\n"
-                f"Filename: {filename}\n\n"
-                "Please fetch the file, parse it, and then produce:\n"
-                "SECTION 1 — JSON per schema\n"
-                "SECTION 2 — ~650‑word trading plan\n"
-                "SECTION 3 — intraday execution bullet plan\n"
-                "Do not add anything else.")}]
+
+  # Fetch the actual content of the file
+  response = requests.get(file_url)
+  if response.status_code != 200:
+    raise RuntimeError(f"Failed to fetch file content: {response.status_code}")
+
+  json_content = response.text
+  messages = [
+      {"role": "system", "content": SYSTEM_INSTRUCTIONS},
+      {"role": "user", "content": (
+          f"Here is the JSON file named {filename}:\n\n"
+          f"{json_content}\n\n"
+          "Please parse this JSON and produce:\n"
+          "SECTION 1 — JSON per schema\n"
+          "SECTION 2 — ~650‑word trading plan\n"
+          "SECTION 3 — intraday execution bullet plan\n"
+          "Do not add anything else."
+      )}
+  ]
+
   response = client.chat.completions.create(model="o3", messages=messages)
-  logger.info("o3 model responded with finish_reason=%s",
-              response.choices[0].finish_reason)
+  logger.info("o3 model responded with finish_reason=%s", response.choices[0].finish_reason)
   return response.choices[0].message.content
 
 

@@ -5,17 +5,17 @@ from __future__ import annotations
 import json
 import logging
 import os
+import pytz
 import requests
 import time
+import yfinance as yf
 from datetime import datetime, timedelta
-from functools import lru_cache
 from dotenv import load_dotenv
+from functools import lru_cache
+from pandas.tseries.offsets import BDay  # from pandas
 from pathlib import Path
 from pydantic import BaseModel, Field, field_validator, RootModel
 from typing import Any, Dict, Optional, List
-import pytz
-from pandas.tseries.offsets import BDay  # from pandas
-import yfinance as yf
 
 logger = logging.getLogger(__name__)
 # Reduce verbosity by defaulting to INFO level
@@ -60,10 +60,8 @@ class QuoteResponse(BaseModel):
     return datetime.utcfromtimestamp(v).isoformat() + "Z"
 
 
-def get_quote(
-    symbol: str,
-    session: Optional[requests.Session] = None,
-) -> QuoteResponse:
+def get_quote(symbol: str,
+    session: Optional[requests.Session] = None, ) -> QuoteResponse:
   """
   Return a real-time quote for `symbol`.
   https://finnhub.io/docs/api/quote
@@ -74,8 +72,8 @@ def get_quote(
 
 class CompanyNewsItem(BaseModel):
   """Single company news item from Finnhub API."""
-  category: str                            # Category, e.g., 'company'
-  datetime: int | str                      # UNIX timestamp or ISO8601 UTC string
+  category: str  # Category, e.g., 'company'
+  datetime: int | str  # UNIX timestamp or ISO8601 UTC string
   headline: str
   id: int
   image: Optional[str]
@@ -95,21 +93,14 @@ class CompanyNewsResponse(RootModel[List[CompanyNewsItem]]):
   """List of company news items."""
 
 
-def get_company_news(
-    symbol: str,
-    start: datetime,
-    end: datetime,
-    session: Optional[requests.Session] = None,
-) -> List[CompanyNewsItem]:
+def get_company_news(symbol: str, start: datetime, end: datetime,
+    session: Optional[requests.Session] = None, ) -> List[CompanyNewsItem]:
   """
   Return company news for `symbol` from `start` to `end`.
   https://finnhub.io/docs/api/company-news
   """
-  params = {
-    "symbol": symbol.upper(),
-    "from": start.strftime("%Y-%m-%d"),
-    "to":   end.strftime("%Y-%m-%d"),
-  }
+  params = {"symbol": symbol.upper(), "from": start.strftime("%Y-%m-%d"),
+    "to": end.strftime("%Y-%m-%d"), }
   # data = _call_finnhub("/company-news", params, session)
   # resp = CompanyNewsResponse.model_validate(data)
   return []
@@ -123,11 +114,8 @@ def _get_token() -> str:
   return token
 
 
-def _call_finnhub(
-    path: str,
-    params: Dict[str, Any],
-    session: Optional[requests.Session] = None,
-) -> Any:
+def _call_finnhub(path: str, params: Dict[str, Any],
+    session: Optional[requests.Session] = None, ) -> Any:
   """Perform a GET request with retries and backoff."""
   global _API_CALL_COUNT, _LAST_CALL_TIME
 
@@ -152,7 +140,8 @@ def _call_finnhub(
         return None
 
       if resp.status_code >= 400:
-        raise requests.HTTPError(f"{resp.status_code} error: {resp.text}", response=resp)
+        raise requests.HTTPError(f"{resp.status_code} error: {resp.text}",
+                                 response=resp)
       data = resp.json()
       if not data:
         raise ValueError("Empty response")
@@ -176,8 +165,8 @@ class CandleResponse(BaseModel):
   l: list[float] = Field(..., description="Low prices")
   c: list[float] = Field(..., description="Close prices")
   v: list[float] = Field(..., description="Volume values")
-  t: list[str]   = Field(..., description="ISO time stamps")
-  s: str         = Field(..., description="Response status")
+  t: list[str] = Field(..., description="ISO time stamps")
+  s: str = Field(..., description="Response status")
 
   @field_validator("t", mode="before")
   def _to_iso(cls, v: list[int]) -> list[str]:
@@ -219,78 +208,59 @@ class TechnicalIndicatorResponse(BaseModel):
     extra = "allow"
 
 
-def get_candles(
-    symbol: str,
-    resolution: str,
-    start: datetime,
-    end: datetime,
-    session: Optional[requests.Session] = None,
-) -> CandleResponse:
+def get_candles(symbol: str, resolution: str, start: datetime, end: datetime,
+    session: Optional[requests.Session] = None, ) -> CandleResponse:
   """Return OHLCV candles for ``symbol`` between ``start`` and ``end``."""
-  params = {
-    "symbol":     symbol.upper(),
-    "resolution": resolution,
-    "from":       int(start.timestamp()),
-    "to":         int(end.timestamp()),
-  }
-  logger.warning(f"No candle data returned for {symbol} between {start} and {end}, falling back to yfinance")
+  params = {"symbol": symbol.upper(), "resolution": resolution,
+    "from": int(start.timestamp()), "to": int(end.timestamp()), }
+  logger.warning(
+    f"No candle data returned for {symbol} between {start} and {end}, falling back to yfinance")
   # Map resolution to yfinance interval
-  interval = f"{resolution}m" if resolution.isdigit() else ("1d" if resolution.upper()=="D" else "1wk")
+  interval = f"{resolution}m" if resolution.isdigit() else (
+    "1d" if resolution.upper() == "D" else "1wk")
   # Fetch from yfinance
-  df = yf.Ticker(symbol).history(start=start, end=end, interval=interval, prepost=True)
+  df = yf.Ticker(symbol).history(start=start, end=end, interval=interval,
+                                 prepost=True)
   if df.empty:
     raise ValueError("No candle data available from yfinance fallback")
   # Build the same dict shape
-  data = {
-    "o": df["Open"].tolist(),
-    "h": df["High"].tolist(),
-    "l": df["Low"].tolist(),
-    "c": df["Close"].tolist(),
+  data = {"o": df["Open"].tolist(), "h": df["High"].tolist(),
+    "l": df["Low"].tolist(), "c": df["Close"].tolist(),
     "v": df["Volume"].astype(float).tolist(),
-    "t": [int(ts.timestamp()) for ts in df.index.to_pydatetime()],
-    "s": "ok"
-  }
+    "t": [int(ts.timestamp()) for ts in df.index.to_pydatetime()], "s": "ok"}
   return CandleResponse.model_validate(data)
 
 
-def get_pattern_recognition(
-    symbol: str,
-    resolution: str,
-    session: Optional[requests.Session] = None,
-) -> PatternRecognitionResponse:
+def get_pattern_recognition(symbol: str, resolution: str,
+    session: Optional[requests.Session] = None, ) -> PatternRecognitionResponse:
   """Return detected classical patterns for ``symbol``."""
-  data = _call_finnhub("/scan/pattern", {"symbol": symbol.upper(),"resolution": resolution.upper()}, session)
+  data = _call_finnhub("/scan/pattern", {"symbol": symbol.upper(),
+                                         "resolution": resolution.upper()},
+                       session)
   return PatternRecognitionResponse.model_validate(data)
 
 
-def get_support_resistance(
-    symbol: str,
-    resolution: str,
-    session: Optional[requests.Session] = None,
-) -> SupportResistanceResponse:
+def get_support_resistance(symbol: str, resolution: str,
+    session: Optional[requests.Session] = None, ) -> SupportResistanceResponse:
   """Return support and resistance levels for ``symbol``."""
-  data = _call_finnhub("/scan/support-resistance", {"symbol": symbol.upper(),"resolution": resolution.upper()}, session)
+  data = _call_finnhub("/scan/support-resistance", {"symbol": symbol.upper(),
+                                                    "resolution": resolution.upper()},
+                       session)
   return SupportResistanceResponse.model_validate(data)
 
 
-def get_aggregate_indicator(
-    symbol: str,
-    resolution: str,
-    session: Optional[requests.Session] = None,
-) -> AggregateIndicatorResponse:
+def get_aggregate_indicator(symbol: str, resolution: str,
+    session: Optional[requests.Session] = None, ) -> AggregateIndicatorResponse:
   """Return Finnhub's aggregate technical indicator for ``symbol``."""
-  data = _call_finnhub("/scan/technical-indicator", {"symbol": symbol.upper(), "resolution": resolution.upper()}, session)
+  data = _call_finnhub("/scan/technical-indicator", {"symbol": symbol.upper(),
+                                                     "resolution": resolution.upper()},
+                       session)
   return AggregateIndicatorResponse.model_validate(data)
 
 
-def get_technical_indicator(
-    symbol: str,
-    indicator: str,
-    resolution: str = "D",
-    start: datetime | None = None,
-    end: datetime | None = None,
-    session: Optional[requests.Session] = None,
-) -> dict[str, Any] | None:
+def get_technical_indicator(symbol: str, indicator: str, resolution: str = "D",
+    start: datetime | None = None, end: datetime | None = None,
+    session: Optional[requests.Session] = None, ) -> dict[str, Any] | None:
   """
   Return a single technical indicator series for ``symbol``.
   Only one API call is made per indicator name.
@@ -301,23 +271,14 @@ def get_technical_indicator(
   if end is None:
     end = datetime.utcnow()
 
-  cache_key = (
-    symbol.upper(),
-    indicator.lower(),
-    resolution,
-    int(start.timestamp()),
-    int(end.timestamp()),
-  )
+  cache_key = (symbol.upper(), indicator.lower(), resolution,
+               int(start.timestamp()), int(end.timestamp()),)
   if cache_key in _TECHNICAL_CACHE:
     return _TECHNICAL_CACHE[cache_key]
 
-  params = {
-    "symbol":     symbol.upper(),
-    "indicator":  indicator.lower(),
-    "resolution": resolution,
-    "from":       int(start.timestamp()),
-    "to":         int(end.timestamp()),
-  }
+  params = {"symbol": symbol.upper(), "indicator": indicator.lower(),
+    "resolution": resolution, "from": int(start.timestamp()),
+    "to": int(end.timestamp()), }
 
   # Determine if we're on an intraday chart
   intraday = resolution not in {"D", "W"}
@@ -343,10 +304,9 @@ def get_technical_indicator(
     else:
       params["timeperiod"] = 14
 
-  elif ind in {"cci", "cmo", "roc", "rocr", "adx", "adxr",
-               "willr", "mfi", "ultosc", "dx",
-               "minusdi", "plusdi", "minusdm", "plusdm",
-               "atr", "natr", "mom"}:
+  elif ind in {"cci", "cmo", "roc", "rocr", "adx", "adxr", "willr", "mfi",
+               "ultosc", "dx", "minusdi", "plusdi", "minusdm", "plusdm", "atr",
+               "natr", "mom"}:
     params["timeperiod"] = 10 if intraday else 14
 
   elif ind in {"macd", "macdext"}:
@@ -402,14 +362,10 @@ def get_technical_indicator(
   return data
 
 
-def fetch_all(
-    symbol: str,
-    resolution: str = "D",
-    lookback_days: int = 2,
+def fetch_all(symbol: str, resolution: str = "D", lookback_days: int = 2,
     save_path: str | Path = Path("data"),
     session: Optional[requests.Session] = None,
-    dry_run: bool = False,
-) -> Path:
+    dry_run: bool = False, ) -> Path:
   """High-level façade to fetch & save all endpoints."""
   global _API_CALL_COUNT
   eastern = pytz.timezone("US/Eastern")
@@ -418,16 +374,10 @@ def fetch_all(
 
   if dry_run:
     logger.info("Dry-run enabled - skipping Finnhub calls for %s", symbol)
-    result = {
-      "symbol": symbol.upper(),
-      "resolution": resolution,
-      "last_updated_utc": datetime.utcnow().isoformat() + "Z",
-      "candles": {},
-      "patterns": [],
-      "support_resistance": {},
-      "aggregate_indicator": {},
-      "technical_indicators": {},
-    }
+    result = {"symbol": symbol.upper(), "resolution": resolution,
+      "last_updated_utc": datetime.utcnow().isoformat() + "Z", "candles": {},
+      "patterns": [], "support_resistance": {}, "aggregate_indicator": {},
+      "technical_indicators": {}, }
     path = Path(save_path)
     path.mkdir(parents=True, exist_ok=True)
     outfile = path / f"{symbol.upper()}_analysis_{resolution}.json"
@@ -437,37 +387,32 @@ def fetch_all(
     return outfile
 
   # Determine ending timestamp based on resolution and market days
-  if resolution in ("1", "5"):
+  if resolution in ("1", "5", "15"):
     # For 1- and 5-minute, we want the last 3 hours relative to now ET
     end_et = now_et
   else:
     # For daily/weekly, adhere to market close logic
     market_open = datetime.strptime("09:30", "%H:%M").time()
-    if now_et.weekday() >= 5 or (now_et.weekday() == 0 and now_et.time() < market_open):
+    if now_et.weekday() >= 5 or (
+        now_et.weekday() == 0 and now_et.time() < market_open):
       # Weekend or before Monday open: use last business day's 16:00
-      end_et = (now_et - BDay(1)).replace(hour=16, minute=0, second=0, microsecond=0)
+      end_et = (now_et - BDay(1)).replace(hour=16, minute=0, second=0,
+                                          microsecond=0)
     else:
       # During market hours or after: use today's close at 16:00
       end_et = now_et.replace(hour=16, minute=0, second=0, microsecond=0)
 
   end = end_et.astimezone(pytz.utc).replace(tzinfo=None)
-  if resolution in ("1", "5"):
-    # fetch 1-minute bars for the last 3 hours
-    start = end - timedelta(hours=6)
-  elif resolution == "W":
-    start = end - timedelta(weeks=2)
-  else:
-    start = end - timedelta(days=lookback_days)
-  indicators = [
-    "SMA","EMA","WMA","DEMA","TEMA","TRIMA","KAMA","MAMA","T3",
-    "MACD","MACDEXT","STOCH","STOCHF","RSI","STOCHRSI","WILLR",
-    "ADX","ADXR","APO","PPO","MOM","BOP","CCI","CMO","ROC","ROCR",
-    "AROON","AROONOSC","MFI","TRIX","ULTOSC","DX","MINUSDI","PLUSDI",
-    "MINUSDM","PLUSDM","BBANDS","MIDPOINT","MIDPRICE","SAR","TRANGE",
-    "ATR","NATR","AD","ADOSC","OBV","HTTRENDLINE","HTSINE",
-    "HTTRENDMODE","HTDCPERIOD","HTDCPHASE","HTPHASOR",
-  ]
-
+  # Calculate start time based on 60 candles back from end time
+  minutes_per_candle = {"1": 1, "5": 5, "15": 15, "30": 30, "60": 60, "D": 1440,
+    "W": 10080, }.get(resolution.upper(), 1440)  # Default to daily
+  start = end - timedelta(minutes=minutes_per_candle * 60)
+  indicators = ["SMA", "EMA", "WMA", "DEMA", "MACD", "MACDEXT", "STOCH",
+    "STOCHF", "RSI", "STOCHRSI", "WILLR", "ADX", "ADXR", "APO", "PPO", "MOM",
+    "BOP", "CCI", "CMO", "ROC", "ROCR", "AROON", "AROONOSC", "MFI", "TRIX",
+    "ULTOSC", "DX", "MINUSDI", "PLUSDI", "MINUSDM", "PLUSDM", "BBANDS",
+    "MIDPOINT", "MIDPRICE", "SAR", "TRANGE", "ATR", "NATR", "AD", "ADOSC",
+    "OBV", ]
 
   sess = session or requests.Session()
 
@@ -476,21 +421,19 @@ def fetch_all(
   support_resistance = get_support_resistance(symbol, resolution, sess)
   aggregate_indicator = get_aggregate_indicator(symbol, resolution, sess)
 
-  result = {
-    "symbol":                symbol.upper(),
-    "resolution":            resolution,
-    "last_updated_utc":      end.isoformat() + "Z",
-    "candles":               candles.dict() if candles else {},
-    "patterns":              patterns.dict().get("points", []) if patterns else [],
-    "support_resistance":    support_resistance.dict() if support_resistance else {},
-    "aggregate_indicator":   aggregate_indicator.dict() if aggregate_indicator else {},
-  }
+  result = {"symbol": symbol.upper(), "resolution": resolution,
+    "last_updated_utc": end.isoformat() + "Z",
+    "candles": candles.dict() if candles else {},
+    "patterns": patterns.dict().get("points", []) if patterns else [],
+    "support_resistance": support_resistance.dict() if support_resistance else {},
+    "aggregate_indicator": aggregate_indicator.dict() if aggregate_indicator else {}, }
   technical_indicators: dict[str, Any] = {}
   # Weekly resolution does not require the heavy technical indicator fetch
   if resolution != "W":
     for ind in indicators:
       try:
-        indicator_response = get_technical_indicator(symbol, ind, resolution, start, end, session=sess)
+        indicator_response = get_technical_indicator(symbol, ind, resolution,
+                                                     start, end, session=sess)
         if indicator_response:
           for key in ("o", "h", "l", "c", "v", "t", "s"):
             indicator_response.pop(key, None)
@@ -516,7 +459,8 @@ def main() -> None:
   q = get_quote("AAPL")
   print(q.c, q.h, q.l, q.o, q.pc, q.t)
 
-  news = get_company_news("AAPL", datetime.utcnow() - timedelta(days=1), datetime.utcnow())
+  news = get_company_news("AAPL", datetime.utcnow() - timedelta(days=1),
+                          datetime.utcnow())
   for item in news:
     print(item)
 
