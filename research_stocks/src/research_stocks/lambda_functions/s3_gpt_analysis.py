@@ -34,7 +34,8 @@ def generate_presigned_url(bucket: str, key: str, expiration: int = 300) -> str:
 
 def load_system_instructions() -> str:
   try:
-    obj = s3_client.get_object(Bucket="devtailor-transactions", Key="gpt/instructions.txt")
+    obj = s3_client.get_object(Bucket="devtailor-transactions",
+                               Key="gpt/instructions.txt")
     return obj["Body"].read().decode("utf-8")
   except ClientError as e:
     logger.error("Could not fetch instructions from S3: %s", e)
@@ -46,14 +47,15 @@ def call_gpt_action(file_url: str, filename: str) -> str:
   client = OpenAI()
   SYSTEM_INSTRUCTIONS = load_system_instructions()
   messages = [{"role": "system", "content": SYSTEM_INSTRUCTIONS},
-              {"role": "user",
-               "content": f"Analyze the JSON file at this URL:\n{file_url}\nFilename: {filename}"
-                          f"Please enhance the forecast using the multi‑timeframe technical "
-                          f"JSON provided in file following all instructions.Output Sections exactly as specified."}]
-  response = client.chat.completions.create(
-      model="o3",
-      messages=messages
-  )
+              {"role": "user", "content": (
+                f"Here is the presigned S3 URL where the JSON is located:\n{file_url}\n"
+                f"Filename: {filename}\n\n"
+                "Please fetch the file, parse it, and then produce:\n"
+                "SECTION 1 — JSON per schema\n"
+                "SECTION 2 — ~650‑word trading plan\n"
+                "SECTION 3 — intraday execution bullet plan\n"
+                "Do not add anything else.")}]
+  response = client.chat.completions.create(model="o3", messages=messages)
   logger.info("o3 model responded with finish_reason=%s",
               response.choices[0].finish_reason)
   return response.choices[0].message.content
