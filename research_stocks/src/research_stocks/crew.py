@@ -824,7 +824,6 @@ class StockAnalysisCrew:
     # ── Step 2: Pull company‐specific news via Finnhub and append ────────
     try:
       from tools.pattern_analysis.fintech import get_company_news
-      from datetime import datetime, timedelta
 
       # start = datetime.utcnow() - timedelta(days=1)
       # end = datetime.utcnow()
@@ -848,8 +847,7 @@ class StockAnalysisCrew:
 
       # Build analysis object key
       date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-      filename = os.path.basename(key)
-      analysis_key = f"analysis/{date_str}-{filename}.md"
+      analysis_key = f"analysis/{date_str}-{symbol}.md"
 
       # Save analysis result to S3
       save_analysis("devtailor-transactions", analysis_key, analysis_text)
