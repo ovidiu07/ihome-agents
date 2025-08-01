@@ -42,32 +42,23 @@ def load_system_instructions() -> str:
     return "Default fallback instructions here..."
 
 
-def call_gpt_action(file_url: str, filename: str) -> str:
+def call_gpt_action_with_json_content(results: dict, filename: str) -> str:
   """Call the OpenAI o3 model with system instructions and JSON content directly."""
   client = OpenAI()
   SYSTEM_INSTRUCTIONS = load_system_instructions()
-
-  # Fetch the actual content of the file
-  response = requests.get(file_url)
-  if response.status_code != 200:
-    raise RuntimeError(f"Failed to fetch file content: {response.status_code}")
-
-  json_content = response.text
-  messages = [
-      {"role": "system", "content": SYSTEM_INSTRUCTIONS},
-      {"role": "user", "content": (
-          f"Here is the JSON file named {filename}:\n\n"
-          f"{json_content}\n\n"
-          "Please parse this JSON and produce:\n"
-          "SECTION 1 — JSON per schema\n"
-          "SECTION 2 — ~650‑word trading plan\n"
-          "SECTION 3 — intraday execution bullet plan\n"
-          "Do not add anything else."
-      )}
-  ]
+  json_content = json.dumps(results, indent=2)
+  messages = [{"role": "system", "content": SYSTEM_INSTRUCTIONS},
+    {"role": "user", "content": (f"Here is the JSON file named {filename}:\n\n"
+                                 f"{json_content}\n\n"
+                                 "Please parse this JSON and produce:\n"
+                                 "SECTION 1 — JSON per schema\n"
+                                 "SECTION 2 — ~650‑word trading plan\n"
+                                 "SECTION 3 — intraday execution bullet plan\n"
+                                 "Do not add anything else.")}]
 
   response = client.chat.completions.create(model="o3", messages=messages)
-  logger.info("o3 model responded with finish_reason=%s", response.choices[0].finish_reason)
+  logger.info("o3 model responded with finish_reason=%s",
+              response.choices[0].finish_reason)
   return response.choices[0].message.content
 
 
@@ -102,18 +93,18 @@ def handler(event, context):
   presigned_url = generate_presigned_url(bucket, key)
 
   # Call GPT Action
-  result = call_gpt_action(presigned_url, key)
-  analysis_text = result
-  if analysis_text is None:
-    logger.error("GPT Action response missing 'analysis' field: %s", result)
-    raise RuntimeError("Missing analysis in GPT Action response")
-
-  # Build analysis object key
-  date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+  # result = call_gpt_action_with_presigned_url(presigned_url, key)
+  # analysis_text = result
+  # if analysis_text is None:
+  #   logger.error("GPT Action response missing 'analysis' field: %s", result)
+  #   raise RuntimeError("Missing analysis in GPT Action response")
+  #
+  # # Build analysis object key
+  date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d-%H-%M")
   filename = os.path.basename(key)
   analysis_key = f"analysis/{date_str}-{filename}.md"
-
-  # Save analysis result to S3
-  save_analysis(bucket, analysis_key, analysis_text)
+  #
+  # # Save analysis result to S3
+  # save_analysis(bucket, analysis_key, analysis_text)
 
   return {"statusCode": 200, "body": json.dumps({"analysis_key": analysis_key})}
