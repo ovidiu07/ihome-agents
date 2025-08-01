@@ -5,14 +5,12 @@ from __future__ import annotations
 import json
 import logging
 import os
-import pytz
 import requests
 import time
 import yfinance as yf
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 from functools import lru_cache
-from pandas.tseries.offsets import BDay  # from pandas
 from pathlib import Path
 from pydantic import BaseModel, Field, field_validator, RootModel
 from typing import Any, Dict, Optional, List
@@ -369,9 +367,7 @@ def fetch_all(symbol: str, resolution: str = "D", lookback_days: int = 2,
     dry_run: bool = False, ) -> Path:
   """High-level façade to fetch & save all endpoints."""
   global _API_CALL_COUNT
-  eastern = pytz.timezone("US/Eastern")
-  now_utc = datetime.utcnow()
-  now_et = now_utc.astimezone(eastern).replace(second=0, microsecond=0) - timedelta(minutes=1)
+  now = datetime.utcnow().replace(tzinfo=timezone.utc)
 
   if dry_run:
     logger.info("Dry-run enabled - skipping Finnhub calls for %s", symbol)
@@ -387,38 +383,20 @@ def fetch_all(symbol: str, resolution: str = "D", lookback_days: int = 2,
     logger.info("Saved analysis to %s", outfile)
     return outfile
 
-  # Determine ending timestamp based on resolution and market days
-  if resolution in ("1", "5", "15"):
-    end_et = _get_last_candle_time(resolution, now_et)
-  else:
-    # For daily/weekly, adhere to market close logic
-    market_open = datetime.strptime("09:30", "%H:%M").time()
-    if now_et.weekday() >= 5 or (
-        now_et.weekday() == 0 and now_et.time() < market_open):
-      # Weekend or before Monday open: use last business day's 16:00
-      end_et = (now_et - BDay(1)).replace(hour=16, minute=0, second=0,
-                                          microsecond=0)
-    else:
-      # During market hours or after: use today's close at 16:00
-      end_et = now_et.replace(hour=16, minute=0, second=0, microsecond=0)
-
-  end = end_et.astimezone(pytz.utc).replace(tzinfo=None)
-  # Calculate start time based on 60 candles back from end time
+  # Determine ending timestamp and 60-candle lookback purely in UTC
+  end = _get_last_candle_time(resolution, now)
   resolution = resolution.upper()
-  if resolution in {"1", "5", "15", "30", "60"}:
-    # For minute-based resolutions
+  if resolution.isdigit():
     minutes_per_candle = int(resolution)
     start = end - timedelta(minutes=minutes_per_candle * 60)
   elif resolution == "D":
-    # Daily candles → subtract 60 days (weekends will be auto-skipped by yfinance)
-    start = end - timedelta(days=90)  # ~60 market days
+    start = end - timedelta(days=60)
   elif resolution == "W":
-    # Weekly candles → subtract ~60 weeks
-    start = end - timedelta(weeks=70)
+    start = end - timedelta(weeks=60)
   else:
     raise ValueError(f"Unsupported resolution: {resolution}")
-  logger.info("Fetching data for %s at %s resolution with start %s and end %s", symbol, resolution, start, end)
-  logger.info("Current time: %s ET", now_et.isoformat())
+  logger.info("Fetching data for %s at %s resolution", symbol, resolution)
+  logger.info("Resolved UTC start: %s end: %s", start.isoformat(), end.isoformat())
   indicators = ["SMA", "EMA", "WMA", "DEMA", "MACD", "MACDEXT", "STOCH",
     "STOCHF", "RSI", "STOCHRSI", "WILLR", "ADX", "ADXR", "APO", "PPO", "MOM",
     "BOP", "CCI", "CMO", "ROC", "ROCR", "AROON", "AROONOSC", "MFI", "TRIX",
@@ -465,13 +443,33 @@ def fetch_all(symbol: str, resolution: str = "D", lookback_days: int = 2,
   return outfile
 
 def _get_last_candle_time(resolution: str, now: datetime) -> datetime:
-  minute_step = {"1": 1, "5": 5, "15": 15, "30": 30, "60": 60}.get(resolution)
-  if not minute_step:
-    return now.replace(hour=16, minute=0, second=0, microsecond=0)  # market close fallback
-  if now.minute % minute_step == 0 and now.second == 0:
-    now -= timedelta(minutes=minute_step)
-  rounded_minutes = now.minute - (now.minute % minute_step)
-  return now.replace(minute=rounded_minutes, second=0, microsecond=0)
+  """Return the timestamp of the last fully completed candle in UTC."""
+  if now.tzinfo is None:
+    now = now.replace(tzinfo=timezone.utc)
+  else:
+    now = now.astimezone(timezone.utc)
+
+  resolution = resolution.upper()
+  if resolution.isdigit():
+    step = int(resolution)
+    floored = now.replace(second=0, microsecond=0)
+    minute_floor = (floored.minute // step) * step
+    last = floored.replace(minute=minute_floor)
+    if last >= now:
+      last -= timedelta(minutes=step)
+    return last
+  if resolution == "D":
+    day = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    if day >= now:
+      day -= timedelta(days=1)
+    return day
+  if resolution == "W":
+    week_start = now - timedelta(days=now.weekday())
+    week_start = week_start.replace(hour=0, minute=0, second=0, microsecond=0)
+    if week_start >= now:
+      week_start -= timedelta(weeks=1)
+    return week_start
+  raise ValueError(f"Unsupported resolution: {resolution}")
 
 def main() -> None:
   """CLI entry point."""
