@@ -24,7 +24,11 @@ from lambda_functions.s3_gpt_analysis import handler as gpt_handler
 load_dotenv()
 
 
-def run_analysis_and_crew(symbol: str, is_general_analysis: bool = True) -> str:
+def run_analysis_and_crew(
+    symbol: str,
+    is_general_analysis: bool = True,
+    previous_report: str | None = None,
+) -> str:
   """
   Run the pattern analysis and then the crew for the given symbol.
 
@@ -32,6 +36,7 @@ def run_analysis_and_crew(symbol: str, is_general_analysis: bool = True) -> str:
       symbol: The stock symbol to analyze
       is_general_analysis: If True, perform general analysis (fetch all finnhub data).
                           If False, perform intraday analysis (fetch only intraday data).
+      previous_report: Optional text of the latest 16:00 general analysis report.
 
   Returns:
       The final report
@@ -42,16 +47,23 @@ def run_analysis_and_crew(symbol: str, is_general_analysis: bool = True) -> str:
   # CrewAI-native invocation:
   crew_instance = StockAnalysisCrew()
   crew_instance._symbol = [symbol]  # ✅ Store symbol globally in the instance
-  return crew_instance.build_market_brief(is_general_analysis).kickoff()
+  return crew_instance.build_market_brief(
+      is_general_analysis,
+      previous_report,
+  ).kickoff()
 
 
 def generate_fallback_report():
   return "Analysis failed. No data available."
 
 
-def safe_run(symbol: str, is_general_analysis: bool = True) -> str:
+def safe_run(
+    symbol: str,
+    is_general_analysis: bool = True,
+    previous_report: str | None = None,
+) -> str:
   try:
-    return run_analysis_and_crew(symbol, is_general_analysis)
+    return run_analysis_and_crew(symbol, is_general_analysis, previous_report)
   except Exception as e:
     logging.error(f"Critical error in execution: {e}")
     return generate_fallback_report()
@@ -113,6 +125,27 @@ def submit_symbols(symbols: str = Form(...)) -> RedirectResponse:
 
 # ─── Forecast logic & scheduler ────────────────────────────────────────────
 
+def find_most_recent_report(s3_client, bucket, symbol, time_marker):
+  """Find the most recent report for a symbol at a specific time."""
+  try:
+    response = s3_client.list_objects_v2(
+        Bucket=bucket,
+        Prefix="analysis/",
+    )
+    matching_reports = []
+    for obj in response.get('Contents', []):
+      key = obj['Key']
+      if symbol in key and time_marker in key:
+        matching_reports.append((key, obj['LastModified']))
+    matching_reports.sort(key=lambda x: x[1], reverse=True)
+    if matching_reports:
+      return matching_reports[0][0]
+    return None
+  except Exception as e:
+    logging.error(f"Error finding recent report for {symbol}: {e}")
+    return None
+
+
 def process_today_symbols(is_general_analysis: bool = True) -> None:
   """
   Run analysis for today's submitted symbols and upload results to S3.
@@ -132,11 +165,12 @@ def process_today_symbols(is_general_analysis: bool = True) -> None:
   s3_client = boto3.client("s3")
   os.makedirs("output", exist_ok=True)
 
-  def process_symbol(sym):
+
+  def process_symbol(sym, previous_report: str | None = None):
     """Process a single symbol and upload results to S3."""
     try:
       print(f"\nProcessing {sym} ...")
-      safe_run(sym, is_general_analysis)
+      safe_run(sym, is_general_analysis, previous_report)
       result_path = Path("output") / f"pattern_analysis_results_{sym}.json"
       if result_path.exists():
         uploaded_key = f"{run_time}/{sym}.json"
@@ -181,8 +215,21 @@ def process_today_symbols(is_general_analysis: bool = True) -> None:
       logging.error(f"Error processing symbol {sym}: {e}")
 
   # Process symbols sequentially to reduce complexity and resource usage
-  for sym in symbols:
-    process_symbol(sym)
+  if not is_general_analysis:
+    for sym in symbols:
+      try:
+        report_key = find_most_recent_report(s3_client, S3_BUCKET, sym, "16-00")
+        previous_text = None
+        if report_key:
+          obj = s3_client.get_object(Bucket=S3_BUCKET, Key=report_key)
+          previous_text = obj["Body"].read().decode("utf-8")
+        process_symbol(sym, previous_text)
+      except Exception as e:
+        logging.error(f"Error processing symbol {sym} with previous report: {e}")
+        process_symbol(sym)
+  else:
+    for sym in symbols:
+      process_symbol(sym)
 
 
 def start_scheduler() -> BackgroundScheduler:

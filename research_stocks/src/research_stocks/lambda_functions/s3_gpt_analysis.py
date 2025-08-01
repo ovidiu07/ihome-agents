@@ -32,29 +32,42 @@ def generate_presigned_url(bucket: str, key: str, expiration: int = 300) -> str:
     raise
 
 
-def load_system_instructions() -> str:
+def load_system_instructions(is_general_analysis: bool = True) -> str:
+  """Load system instructions for the GPT call from S3."""
   try:
-    obj = s3_client.get_object(Bucket="devtailor-transactions",
-                               Key="gpt/instructions.txt")
+    key = ("gpt/instructions.txt" if is_general_analysis
+           else "gpt/intraday_instructions.txt")
+    obj = s3_client.get_object(Bucket="devtailor-transactions", Key=key)
     return obj["Body"].read().decode("utf-8")
   except ClientError as e:
     logger.error("Could not fetch instructions from S3: %s", e)
     return "Default fallback instructions here..."
 
 
-def call_gpt_action_with_json_content(results: dict, filename: str) -> str:
-  """Call the OpenAI o3 model with system instructions and JSON content directly."""
+def call_gpt_action_with_json_content(
+    results: dict,
+    filename: str,
+    is_general_analysis: bool = True,
+    previous_report: str | None = None,
+) -> str:
+  """Call the OpenAI o3 model with system instructions and JSON content."""
   client = OpenAI()
-  SYSTEM_INSTRUCTIONS = load_system_instructions()
+  SYSTEM_INSTRUCTIONS = load_system_instructions(is_general_analysis)
   json_content = json.dumps(results, indent=2)
-  messages = [{"role": "system", "content": SYSTEM_INSTRUCTIONS},
-    {"role": "user", "content": (f"Here is the JSON file named {filename}:\n\n"
-                                 f"{json_content}\n\n"
-                                 "Please parse this JSON and produce:\n"
-                                 "SECTION 1 — JSON per schema\n"
-                                 "SECTION 2 — ~650‑word trading plan\n"
-                                 "SECTION 3 — intraday execution bullet plan\n"
-                                 "Do not add anything else.")}]
+  messages = [{"role": "system", "content": SYSTEM_INSTRUCTIONS}]
+  if not is_general_analysis and previous_report:
+    messages.append({"role": "user",
+                    "content": ("Here is the previous general analysis report:\n\n"
+                                f"{previous_report}\n\n"
+                                "Update this report with the intraday data." )})
+  messages.append({"role": "user",
+                   "content": (f"Here is the JSON file named {filename}:\n\n"
+                               f"{json_content}\n\n"
+                               "Please parse this JSON and produce:\n"
+                               "SECTION 1 — JSON per schema\n"
+                               "SECTION 2 — ~650‑word trading plan\n"
+                               "SECTION 3 — intraday execution bullet plan\n"
+                               "Do not add anything else.")})
 
   response = client.chat.completions.create(model="o3", messages=messages)
   logger.info("o3 model responded with finish_reason=%s",
