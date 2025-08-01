@@ -370,7 +370,7 @@ def fetch_all(symbol: str, resolution: str = "D", lookback_days: int = 2,
   global _API_CALL_COUNT
   eastern = pytz.timezone("US/Eastern")
   now_utc = datetime.utcnow()
-  now_et = now_utc.astimezone(eastern)
+  now_et = now_utc.astimezone(eastern) - timedelta(minutes=2)
 
   if dry_run:
     logger.info("Dry-run enabled - skipping Finnhub calls for %s", symbol)
