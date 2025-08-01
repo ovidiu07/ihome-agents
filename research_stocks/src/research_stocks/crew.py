@@ -846,7 +846,7 @@ class StockAnalysisCrew:
         raise RuntimeError("Missing analysis in GPT Action response")
 
       # Build analysis object key
-      date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+      date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d-%H-%M")
       analysis_key = f"analysis/{date_str}-{symbol}.md"
 
       # Save analysis result to S3
