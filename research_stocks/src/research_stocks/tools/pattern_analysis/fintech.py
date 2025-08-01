@@ -354,6 +354,11 @@ def get_technical_indicator(symbol: str, indicator: str, resolution: str = "D",
 
   # Fetch and handle no-data case
   data = _call_finnhub("/indicator", params, session)
+  # Truncate all list-valued keys to the last 5 values
+  if isinstance(data, dict):
+    for key, value in data.items():
+      if isinstance(value, list):
+        data[key] = value[-5:]
   if data.get("s") == "no_data":
     return None
 

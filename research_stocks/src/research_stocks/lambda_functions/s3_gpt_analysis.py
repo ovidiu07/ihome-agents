@@ -100,7 +100,7 @@ def handler(event, context):
   #   raise RuntimeError("Missing analysis in GPT Action response")
   #
   # # Build analysis object key
-  date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+  date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d-%H-%M")
   filename = os.path.basename(key)
   analysis_key = f"analysis/{date_str}-{filename}.md"
   #
