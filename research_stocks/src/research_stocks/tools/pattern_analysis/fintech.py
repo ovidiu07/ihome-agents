@@ -223,6 +223,7 @@ def get_candles(symbol: str, resolution: str, start: datetime, end: datetime,
                                  prepost=True)
   if df.empty:
     raise ValueError("No candle data available from yfinance fallback")
+  df = df.tail(60)  # ✅ Keep only the most recent 60 candles
   # Build the same dict shape
   data = {"o": df["Open"].tolist(), "h": df["High"].tolist(),
     "l": df["Low"].tolist(), "c": df["Close"].tolist(),
@@ -370,7 +371,7 @@ def fetch_all(symbol: str, resolution: str = "D", lookback_days: int = 2,
   global _API_CALL_COUNT
   eastern = pytz.timezone("US/Eastern")
   now_utc = datetime.utcnow()
-  now_et = now_utc.astimezone(eastern) - timedelta(minutes=2)
+  now_et = now_utc.astimezone(eastern).replace(second=0, microsecond=0) - timedelta(minutes=1)
 
   if dry_run:
     logger.info("Dry-run enabled - skipping Finnhub calls for %s", symbol)
@@ -388,8 +389,7 @@ def fetch_all(symbol: str, resolution: str = "D", lookback_days: int = 2,
 
   # Determine ending timestamp based on resolution and market days
   if resolution in ("1", "5", "15"):
-    # For 1- and 5-minute, we want the last 3 hours relative to now ET
-    end_et = now_et
+    end_et = _get_last_candle_time(resolution, now_et)
   else:
     # For daily/weekly, adhere to market close logic
     market_open = datetime.strptime("09:30", "%H:%M").time()
@@ -404,9 +404,21 @@ def fetch_all(symbol: str, resolution: str = "D", lookback_days: int = 2,
 
   end = end_et.astimezone(pytz.utc).replace(tzinfo=None)
   # Calculate start time based on 60 candles back from end time
-  minutes_per_candle = {"1": 1, "5": 5, "15": 15, "30": 30, "60": 60, "D": 1440,
-    "W": 10080, }.get(resolution.upper(), 1440)  # Default to daily
-  start = end - timedelta(minutes=minutes_per_candle * 60)
+  resolution = resolution.upper()
+  if resolution in {"1", "5", "15", "30", "60"}:
+    # For minute-based resolutions
+    minutes_per_candle = int(resolution)
+    start = end - timedelta(minutes=minutes_per_candle * 60)
+  elif resolution == "D":
+    # Daily candles → subtract 60 days (weekends will be auto-skipped by yfinance)
+    start = end - timedelta(days=90)  # ~60 market days
+  elif resolution == "W":
+    # Weekly candles → subtract ~60 weeks
+    start = end - timedelta(weeks=70)
+  else:
+    raise ValueError(f"Unsupported resolution: {resolution}")
+  logger.info("Fetching data for %s at %s resolution with start %s and end %s", symbol, resolution, start, end)
+  logger.info("Current time: %s ET", now_et.isoformat())
   indicators = ["SMA", "EMA", "WMA", "DEMA", "MACD", "MACDEXT", "STOCH",
     "STOCHF", "RSI", "STOCHRSI", "WILLR", "ADX", "ADXR", "APO", "PPO", "MOM",
     "BOP", "CCI", "CMO", "ROC", "ROCR", "AROON", "AROONOSC", "MFI", "TRIX",
@@ -452,6 +464,14 @@ def fetch_all(symbol: str, resolution: str = "D", lookback_days: int = 2,
   _API_CALL_COUNT = 0
   return outfile
 
+def _get_last_candle_time(resolution: str, now: datetime) -> datetime:
+  minute_step = {"1": 1, "5": 5, "15": 15, "30": 30, "60": 60}.get(resolution)
+  if not minute_step:
+    return now.replace(hour=16, minute=0, second=0, microsecond=0)  # market close fallback
+  if now.minute % minute_step == 0 and now.second == 0:
+    now -= timedelta(minutes=minute_step)
+  rounded_minutes = now.minute - (now.minute % minute_step)
+  return now.replace(minute=rounded_minutes, second=0, microsecond=0)
 
 def main() -> None:
   """CLI entry point."""
