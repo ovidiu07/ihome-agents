@@ -4,8 +4,12 @@ import logging
 import openai
 import os
 import requests
+# Email sending function
+import smtplib
 from botocore.exceptions import ClientError
 from datetime import datetime, timezone
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
@@ -47,32 +51,56 @@ def load_system_instructions(is_general_analysis: bool = True) -> str:
 def call_gpt_action_with_json_content(results: dict, filename: str,
     is_general_analysis: bool = True,
     previous_report: str | None = None, ) -> str:
-  """Call the OpenAI o3 model with system instructions and JSON content."""
+  """Call the OpenAI model with system instructions and JSON content."""
   client = OpenAI()
   SYSTEM_INSTRUCTIONS = load_system_instructions(is_general_analysis)
   json_content = json.dumps(results, indent=2)
   messages = [{"role": "system", "content": SYSTEM_INSTRUCTIONS}]
   # Optional: if intraday and previous general analysis exists
   if not is_general_analysis and previous_report:
-    messages.append({"role": "user",
-      "content": ("Here is the previous general analysis report:\n\n"
-                  f"{previous_report}\n\n"
-                  "Update this report as mentioned in instructions according to intradaily data.")})
+    messages.append({"role": "user", "content": (
+      "Here is the previous general analysis report:\n\n"
+      f"{previous_report}\n\n"
+      "Update this report as mentioned in instructions according to intradaily data.")})
 
   # Always send the JSON content
   messages.append({"role": "user",
-    "content": (f"Here is the JSON file named {filename}:\n\n"
-                f"{json_content}\n\n"
-                "Please parse this JSON and produce:\n"
-                "SECTION 1 — JSON per schema\n"
-                "SECTION 2 — ~650‑word trading plan\n"
-                "SECTION 3 — intraday execution bullet plan\n"
-                "Do not add anything else.")})
+                   "content": (f"Here is the JSON file named {filename}:\n\n"
+                               f"{json_content}\n\n"
+                               "Please parse this JSON and produce sections as mentioned in instructions:\n"
+                               "Do not add anything else.")})
   model_name = "o3" if is_general_analysis else "gpt-4o-mini"
-  response = client.chat.completions.create(model=model_name, messages=messages, temperature=0.0)
-  logger.info("o3 model responded with finish_reason=%s",
+  response = client.chat.completions.create(model=model_name, messages=messages,
+                                            temperature=0.0)
+  send_email_with_analysis(response.choices[0].message.content, filename)
+  logger.info("Model responded with finish_reason=%s",
               response.choices[0].finish_reason)
   return response.choices[0].message.content
+
+
+def send_email_with_analysis(content: str, subject_filename: str):
+  sender_email = os.getenv("SENDER_EMAIL")
+  receiver_email = os.getenv("RECEIVER_EMAIL")
+  smtp_server = os.getenv("SMTP_SERVER")
+  smtp_port = int(os.getenv("SMTP_PORT", 587))
+  smtp_username = os.getenv("SMTP_USERNAME")
+  smtp_password = os.getenv("SMTP_PASSWORD")
+
+  msg = MIMEMultipart()
+  msg["From"] = sender_email
+  msg["To"] = receiver_email
+  msg["Subject"] = f"Check your new analysis report for: {subject_filename}"
+
+  msg.attach(MIMEText(content, "plain"))
+
+  try:
+    with smtplib.SMTP(smtp_server, smtp_port) as server:
+      server.starttls()
+      server.login(smtp_username, smtp_password)
+      server.sendmail(sender_email, receiver_email, msg.as_string())
+      logger.info("Sent analysis email to %s", receiver_email)
+  except Exception as e:
+    logger.error("Failed to send email: %s", e)
 
 
 def save_analysis(bucket: str, key: str, analysis: str):
