@@ -42,8 +42,16 @@ Using all intraday timeframes (1-, 5-, 15-minute):
 1. Re-calculate support/resistance clusters, VWAP, OBV, short-term ATR, and any newly emerged patterns or divergences.
 2. Comment on volume-price behaviour since the open, highlighting anomalies (e.g. high-tick washouts, OBV divergences).
 3. Add *actionable* trade ideas that exploit these fresh levels, including precise entries, stops, targets, and trailing logic.
-4. Keep the prose under **\~650 words**.
+4. Keep the prose under **\~1200 words**.
 5. Where previous advice is **invalidated** by current price action, explicitly say so and replace with updated guidance.
+
+Immediately **after**, append this mandatory sub‑section:
+
+#### 5‑Minute Forecast (next 45 min)
+
+*Output exactly nine 5‑minute bars.*  If any required input is missing, output the structure with `"no data"` placeholders.
+
+Choose **one** format per report (table **or** JSON) and keep it machine‑readable.
 
 ### 3 — Trim the intraday execution plan to the future only
 
@@ -74,15 +82,16 @@ Using all intraday timeframes (1-, 5-, 15-minute):
    }
    ```
 2. **SECTION 2 — step-by-step trading plan**
-(refreshed, richer intraday detail, ≤ 650 words)
+(refreshed, richer intraday detail, ≤ 1200 words)
 
 3. **SECTION 3 — intraday execution plan**
 (bullets only for remaining epochs)
 
 
 ### 5 — General rules
-Preserve all field names and JSON structure exactly.
-Do not project beyond the current session’s close.
-Label any missing intraday technical_indicators as “no data”.
-If intraday data is stale (>10 minutes), warn the user in Section 2.
-Output the three sections only—no extra commentary outside them.
+1. Preserve JSON and header labels **exactly**; no schema drift.
+2. Never project beyond today’s close, except for the mandated 45‑minute 5‑min forecast.
+3. Label any missing indicator as `"no data"`.
+4. Warn (“⚠ Data stale”) if `last_updated_utc` older than 10 minutes.
+5. Output **only** the three sections—no preamble or post‑script.
+6. Maintain a polite, friendly tone—no emojis.

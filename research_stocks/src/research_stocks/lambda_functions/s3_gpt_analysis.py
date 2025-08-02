@@ -36,7 +36,7 @@ def load_system_instructions(is_general_analysis: bool = True) -> str:
   """Load system instructions for the GPT call from S3."""
   try:
     key = (
-      "gpt/instructions.txt" if is_general_analysis else "gpt/intraday_instructions_v2.txt")
+      "gpt/instructions.txt" if is_general_analysis else "gpt/intraday_instructions.txt")
     obj = s3_client.get_object(Bucket="devtailor-transactions", Key=key)
     return obj["Body"].read().decode("utf-8")
   except ClientError as e:
@@ -69,7 +69,7 @@ def call_gpt_action_with_json_content(results: dict, filename: str,
                 "SECTION 3 — intraday execution bullet plan\n"
                 "Do not add anything else.")})
   model_name = "o3" if is_general_analysis else "gpt-4o-mini"
-  response = client.chat.completions.create(model=model_name, messages=messages)
+  response = client.chat.completions.create(model=model_name, messages=messages, temperature=0.0)
   logger.info("o3 model responded with finish_reason=%s",
               response.choices[0].finish_reason)
   return response.choices[0].message.content
