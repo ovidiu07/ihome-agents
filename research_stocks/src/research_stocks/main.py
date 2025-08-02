@@ -19,6 +19,7 @@ from pydantic import BaseModel
 from pytz import timezone
 
 from crew import StockAnalysisCrew
+from crew import call_gpt_action_with_json_content
 from lambda_functions.s3_gpt_analysis import handler as gpt_handler
 from tools.run_analysis import main as run_pattern_analysis
 
@@ -46,7 +47,7 @@ def run_analysis_and_crew(symbol: str, is_general_analysis: bool = True,
   crew_instance = StockAnalysisCrew()
   crew_instance._symbol = [symbol]  # ✅ Store symbol globally in the instance
   return crew_instance.build_market_brief(is_general_analysis,
-      previous_report, ).kickoff()
+                                          previous_report, ).kickoff()
 
 
 def generate_fallback_report():
@@ -75,27 +76,6 @@ DAILY_SYMBOLS: dict[str, list[str]] = {}
 
 app = FastAPI()
 templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
-
-
-class AnalysisRequest(BaseModel):
-  file_url: str
-  filename: str
-
-  @app.post("/agent-analysis")
-  async def agent_analysis(request: AnalysisRequest):
-    print(f"Received /agent-analysis request for file: {request.filename}")
-    try:
-      # 1. Download file using presigned URL
-      response = requests.get(request.file_url, timeout=30)
-      response.raise_for_status()
-      file_content = response.text
-
-      # 2. Process the file — e.g., use your crew/analysis logic here
-      analysis_text = "Processed content of " + request.filename  # placeholder
-
-      return {"analysis": analysis_text}
-    except Exception as e:
-      raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/forecast", response_class=HTMLResponse)
@@ -173,13 +153,13 @@ def process_today_symbols(is_general_analysis: bool = True) -> None:
         uploaded_key = f"{run_time}/{sym}.json"
         with open(result_path, "rb") as fh:
           s3_client.put_object(Bucket=S3_BUCKET, Key=uploaded_key,
-              Body=fh.read(), ContentType="application/json", )
+                               Body=fh.read(), ContentType="application/json", )
         print(f"Uploaded results for {sym} to s3://{S3_BUCKET}/{run_time}/")
 
         # Invoke GPT analysis handler for the uploaded file
         try:
           event = {"Records": [{"s3": {"bucket": {"name": S3_BUCKET},
-            "object": {"key": uploaded_key}, }}]}
+                                       "object": {"key": uploaded_key}, }}]}
           response = gpt_handler(event, None)
           analysis_key = None
           if isinstance(response, dict):
@@ -211,7 +191,7 @@ def process_today_symbols(is_general_analysis: bool = True) -> None:
         process_symbol(sym, previous_text)
       except Exception as e:
         logging.error(
-          f"Error processing symbol {sym} with previous report: {e}")
+            f"Error processing symbol {sym} with previous report: {e}")
         process_symbol(sym)
   else:
     for sym in symbols:
@@ -252,16 +232,26 @@ def manual_run(is_general: bool = True):
           "type": "general" if is_general else "intraday"}
 
 
-@app.get("/test-features")
-def test_features():
+@app.get("/test-intradaily-report")
+def test_intraday_report():
   s3_client = boto3.client("s3")
   report_key = find_most_recent_report(s3_client, S3_BUCKET, "AMD", "13")
   previous_text = None
   if report_key:
     obj = s3_client.get_object(Bucket=S3_BUCKET, Key=report_key)
-    previous_text = obj["Body"].read().decode("utf-8")
-  return {"status": "Triggered", "report_key": report_key
-          ,"Text:": previous_text}
+    previous_text = obj["Body"].read().decode(
+      "utf-8")
+  try:
+    #17 00
+    local_path = Path("output/test/AMD-1.json")
+    with local_path.open("r", encoding="utf-8") as f:
+      json_to_test = json.load(f)
+  except Exception as e:
+    return {"status": "Failed to load local JSON", "error": str(e)}
+  intradaily_analysis = call_gpt_action_with_json_content(json_to_test, "AMD",
+                                                          False, previous_text)
+  return {"status": "Triggered", "report_key": report_key,
+          "intra_daily:": intradaily_analysis}
 
 
 @app.on_event("startup")

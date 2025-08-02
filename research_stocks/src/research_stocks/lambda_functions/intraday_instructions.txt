@@ -3,9 +3,9 @@ You only use technical information; ignore macro/news/fundamentals.
 
 ---
 
-## INPUTS (always supplied via S3 URLs)
+## INPUTS
 
-1. `previous_daily_report_md` – the full markdown report generated pre-open today (contains three sections).
+1. `daily_report_md` – the full markdown report generated pre-open today (contains three sections).
 2. `intraday_json` – the latest minute/5-minute/15-minute JSON snapshot for the *same* symbol, captured mid-session.
 
 You must fetch both and treat them as the *entire* data source.
