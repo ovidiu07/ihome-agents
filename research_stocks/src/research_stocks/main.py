@@ -15,20 +15,18 @@ from fastapi import FastAPI, Form, Request, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pathlib import Path
-from pytz import timezone
 from pydantic import BaseModel
+from pytz import timezone
 
 from crew import StockAnalysisCrew
-from tools.run_analysis import main as run_pattern_analysis
 from lambda_functions.s3_gpt_analysis import handler as gpt_handler
+from tools.run_analysis import main as run_pattern_analysis
+
 load_dotenv()
 
 
-def run_analysis_and_crew(
-    symbol: str,
-    is_general_analysis: bool = True,
-    previous_report: str | None = None,
-) -> str:
+def run_analysis_and_crew(symbol: str, is_general_analysis: bool = True,
+    previous_report: str | None = None, ) -> str:
   """
   Run the pattern analysis and then the crew for the given symbol.
 
@@ -47,21 +45,16 @@ def run_analysis_and_crew(
   # CrewAI-native invocation:
   crew_instance = StockAnalysisCrew()
   crew_instance._symbol = [symbol]  # ✅ Store symbol globally in the instance
-  return crew_instance.build_market_brief(
-      is_general_analysis,
-      previous_report,
-  ).kickoff()
+  return crew_instance.build_market_brief(is_general_analysis,
+      previous_report, ).kickoff()
 
 
 def generate_fallback_report():
   return "Analysis failed. No data available."
 
 
-def safe_run(
-    symbol: str,
-    is_general_analysis: bool = True,
-    previous_report: str | None = None,
-) -> str:
+def safe_run(symbol: str, is_general_analysis: bool = True,
+    previous_report: str | None = None, ) -> str:
   try:
     return run_analysis_and_crew(symbol, is_general_analysis, previous_report)
   except Exception as e:
@@ -82,6 +75,7 @@ DAILY_SYMBOLS: dict[str, list[str]] = {}
 
 app = FastAPI()
 templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
+
 
 class AnalysisRequest(BaseModel):
   file_url: str
@@ -110,7 +104,7 @@ def index(request: Request) -> HTMLResponse:
   today = datetime.now(LOCAL_TZ).strftime("%Y-%m-%d")
   symbols = DAILY_SYMBOLS.get(today, [])
   return templates.TemplateResponse("index.html",
-      {"request": request, "symbols": symbols})
+                                    {"request": request, "symbols": symbols})
 
 
 @app.post("/submit")
@@ -126,17 +120,21 @@ def submit_symbols(symbols: str = Form(...)) -> RedirectResponse:
 # ─── Forecast logic & scheduler ────────────────────────────────────────────
 
 def find_most_recent_report(s3_client, bucket, symbol, time_marker):
-  """Find the most recent report for a symbol at a specific time."""
+  """Find the most recent report for a symbol at a specific hour (time_marker)."""
   try:
-    response = s3_client.list_objects_v2(
-        Bucket=bucket,
-        Prefix="analysis/",
-    )
+    response = s3_client.list_objects_v2(Bucket=bucket, Prefix="analysis/", )
     matching_reports = []
     for obj in response.get('Contents', []):
       key = obj['Key']
-      if symbol in key and time_marker in key:
-        matching_reports.append((key, obj['LastModified']))
+      logging.debug(f"Scanning key: {key}")
+      # Match pattern: analysis/YYYY-MM-DD-HH-MM-SYMBOL.md
+      match = re.match(
+          rf"analysis/\d{{4}}-\d{{2}}-\d{{2}}-(\d{{2}})-\d{{2}}-{re.escape(symbol)}\.md",
+          key, re.IGNORECASE)
+      if match:
+        hour_str = match.group(1)
+        if hour_str == time_marker:
+          matching_reports.append((key, obj['LastModified']))
     matching_reports.sort(key=lambda x: x[1], reverse=True)
     if matching_reports:
       return matching_reports[0][0]
@@ -165,7 +163,6 @@ def process_today_symbols(is_general_analysis: bool = True) -> None:
   s3_client = boto3.client("s3")
   os.makedirs("output", exist_ok=True)
 
-
   def process_symbol(sym, previous_report: str | None = None):
     """Process a single symbol and upload results to S3."""
     try:
@@ -175,26 +172,14 @@ def process_today_symbols(is_general_analysis: bool = True) -> None:
       if result_path.exists():
         uploaded_key = f"{run_time}/{sym}.json"
         with open(result_path, "rb") as fh:
-          s3_client.put_object(
-              Bucket=S3_BUCKET,
-              Key=uploaded_key,
-              Body=fh.read(),
-              ContentType="application/json",
-          )
+          s3_client.put_object(Bucket=S3_BUCKET, Key=uploaded_key,
+              Body=fh.read(), ContentType="application/json", )
         print(f"Uploaded results for {sym} to s3://{S3_BUCKET}/{run_time}/")
 
         # Invoke GPT analysis handler for the uploaded file
         try:
-          event = {
-              "Records": [
-                  {
-                      "s3": {
-                          "bucket": {"name": S3_BUCKET},
-                          "object": {"key": uploaded_key},
-                      }
-                  }
-              ]
-          }
+          event = {"Records": [{"s3": {"bucket": {"name": S3_BUCKET},
+            "object": {"key": uploaded_key}, }}]}
           response = gpt_handler(event, None)
           analysis_key = None
           if isinstance(response, dict):
@@ -204,8 +189,8 @@ def process_today_symbols(is_general_analysis: bool = True) -> None:
                 analysis_key = json.loads(body).get("analysis_key")
               except Exception as parse_exc:
                 logging.warning(
-                    "Failed to parse GPT handler response for %s: %s", sym, parse_exc
-                )
+                    "Failed to parse GPT handler response for %s: %s", sym,
+                    parse_exc)
           logging.info("GPT analysis stored for %s at %s", sym, analysis_key)
         except Exception as handler_exc:
           logging.warning("GPT handler failed for %s: %s", sym, handler_exc)
@@ -218,14 +203,15 @@ def process_today_symbols(is_general_analysis: bool = True) -> None:
   if not is_general_analysis:
     for sym in symbols:
       try:
-        report_key = find_most_recent_report(s3_client, S3_BUCKET, sym, "16-00")
+        report_key = find_most_recent_report(s3_client, S3_BUCKET, sym, "13")
         previous_text = None
         if report_key:
           obj = s3_client.get_object(Bucket=S3_BUCKET, Key=report_key)
           previous_text = obj["Body"].read().decode("utf-8")
         process_symbol(sym, previous_text)
       except Exception as e:
-        logging.error(f"Error processing symbol {sym} with previous report: {e}")
+        logging.error(
+          f"Error processing symbol {sym} with previous report: {e}")
         process_symbol(sym)
   else:
     for sym in symbols:
@@ -237,16 +223,20 @@ def start_scheduler() -> BackgroundScheduler:
   scheduler = BackgroundScheduler(timezone=LOCAL_TZ)
 
   # General analysis times (15:00 and 16:00)
-  general_analysis_times = [(13, 0), (14, 0), (15, 0), (15, 30), (16, 0), (16, 30)]
+  general_analysis_times = [(13, 0), (14, 0), (15, 0), (15, 30), (16, 0),
+                            (16, 30)]
   for hour, minute in general_analysis_times:
     scheduler.add_job(process_today_symbols, "cron", day_of_week="mon-fri",
-        hour=hour, minute=minute, kwargs={"is_general_analysis": True}, )
+                      hour=hour, minute=minute,
+                      kwargs={"is_general_analysis": True}, )
 
   # Intraday analysis times (17:00, 18:30, and 19:30)
-  intraday_analysis_times = [(17, 0), (17, 30), (18, 0), (18, 30), (19, 0), (20, 0), (20, 30), (21, 0), (22, 0), (22, 30)]
+  intraday_analysis_times = [(17, 0), (17, 30), (18, 0), (18, 30), (19, 0),
+                             (20, 0), (20, 30), (21, 0), (22, 0), (22, 30)]
   for hour, minute in intraday_analysis_times:
     scheduler.add_job(process_today_symbols, "cron", day_of_week="mon-fri",
-        hour=hour, minute=minute, kwargs={"is_general_analysis": False}, )
+                      hour=hour, minute=minute,
+                      kwargs={"is_general_analysis": False}, )
 
   scheduler.start()
   return scheduler
@@ -260,6 +250,18 @@ def manual_run(is_general: bool = True):
   process_today_symbols(is_general_analysis=is_general)
   return {"status": "Triggered",
           "type": "general" if is_general else "intraday"}
+
+
+@app.get("/test-features")
+def test_features():
+  s3_client = boto3.client("s3")
+  report_key = find_most_recent_report(s3_client, S3_BUCKET, "AMD", "13")
+  previous_text = None
+  if report_key:
+    obj = s3_client.get_object(Bucket=S3_BUCKET, Key=report_key)
+    previous_text = obj["Body"].read().decode("utf-8")
+  return {"status": "Triggered", "report_key": report_key
+          ,"Text:": previous_text}
 
 
 @app.on_event("startup")
