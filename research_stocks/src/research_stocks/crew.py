@@ -700,7 +700,11 @@ class StockAnalysisCrew:
     print(f"✅ Merged {len(news)} headlines into {results_path}")
 
   @crew
-  def build_market_brief(self, is_general_analysis: bool = True) -> None:
+  def build_market_brief(
+      self,
+      is_general_analysis: bool = True,
+      previous_report: str | None = None,
+  ) -> None:
     """
     Executes the end-to-end workflow for generating a market brief for a stock symbol.
 
@@ -719,6 +723,8 @@ class StockAnalysisCrew:
     Args:
         is_general_analysis: If True, perform general analysis (fetch all finnhub data).
                             If False, perform intraday analysis (fetch only intraday data).
+        previous_report: Optional text of the most recent general analysis report
+            to optimise during intraday runs.
 
     Returns:
         None
@@ -839,7 +845,12 @@ class StockAnalysisCrew:
       # results["company_news"] = [item.dict() for item in news_items]
       results_path.parent.mkdir(parents=True, exist_ok=True)
       results_path.write_text(json.dumps(results, indent=2), encoding="utf-8")
-      result = call_gpt_action_with_json_content(results, symbol)
+      result = call_gpt_action_with_json_content(
+          results,
+          symbol,
+          is_general_analysis,
+          previous_report,
+      )
       analysis_text = result
       if analysis_text is None:
         logger.error("GPT Action response missing 'analysis' field: %s", result)

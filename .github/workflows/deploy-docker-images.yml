@@ -39,6 +39,13 @@ jobs:
             export AWS_SECRET_ACCESS_KEY="${{ secrets.AWS_SECRET_ACCESS_KEY }}"
             export AWS_DEFAULT_REGION="${{ secrets.AWS_DEFAULT_REGION }}"
             export OPENAI_API_KEY="${{ secrets.OPENAI_API_KEY }}"
+            export SENDER_EMAIL="${{ vars.SENDER_EMAIL }}"
+            export RECEIVER_EMAIL="${{ vars.RECEIVER_EMAIL }}"
+            export SMTP_SERVER="${{ vars.SMTP_SERVER }}"
+            export SMTP_PORT="${{ vars.OPENAI_API_KEY }}"
+            export SMTP_USERNAME="${{ vars.SMTP_USERNAME }}"
+            export SMTP_PASSWORD="${{ secrets.SMTP_PASSWORD }}"
+
             export PYTHONPATH="/app/research_stocks/src/research_stocks"
             docker-compose pull
             docker-compose up -d
