@@ -80,15 +80,16 @@ def call_gpt_action_with_json_content(results: dict, filename: str,
 
 def send_email_with_analysis(content: str, subject_filename: str):
   sender_email = os.getenv("SENDER_EMAIL")
-  receiver_email = os.getenv("RECEIVER_EMAIL")
+  receiver_raw = os.getenv("RECEIVER_EMAIL")
   smtp_server = os.getenv("SMTP_SERVER")
   smtp_port = int(os.getenv("SMTP_PORT", 587))
   smtp_username = os.getenv("SMTP_USERNAME")
   smtp_password = os.getenv("SMTP_PASSWORD")
-
+  receiver_list = [email.strip() for email in receiver_raw.split(",") if email.strip()]
   msg = MIMEMultipart()
+
   msg["From"] = sender_email
-  msg["To"] = receiver_email
+  msg["To"] = ", ".join(receiver_list)
   msg["Subject"] = f"Check your new analysis report for: {subject_filename}"
 
   msg.attach(MIMEText(content, "plain"))
@@ -97,8 +98,9 @@ def send_email_with_analysis(content: str, subject_filename: str):
     with smtplib.SMTP(smtp_server, smtp_port) as server:
       server.starttls()
       server.login(smtp_username, smtp_password)
-      server.sendmail(sender_email, receiver_email, msg.as_string())
-      logger.info("Sent analysis email to %s", receiver_email)
+      server.sendmail(sender_email, receiver_list, msg.as_string())
+
+      logger.info("Sent analysis email to %s", receiver_list)
   except Exception as e:
     logger.error("Failed to send email: %s", e)
 
