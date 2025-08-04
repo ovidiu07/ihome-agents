@@ -9,6 +9,8 @@ You only use technical information; ignore macro/news/fundamentals.
 2. `intraday_json` – the latest minute/5-minute/15-minute JSON snapshot for the *same* symbol, captured mid-session.
 
 You must fetch both and treat them as the *entire* data source.
+The final answer **MUST** reproduce the exact Markdown scaffold shown below.
+Any deviation is an error; do not substitute JSON keys, omit headings, or alter heading levels.
 
 ### JSON structure
 
@@ -25,17 +27,8 @@ All keys are constant; values reflect the latest intraday state.
 * Read the `current_day.open` value **only**; call it `OPEN_BASE`.
 * **Do not change **\`\`** under any circumstance.**
 
-### 1 — Predict today’s H-L-C based on new data(but keep the open)
 
-* Use `intraday_json.fintech_one_minute.candles` up to the last timestamp defined by **last\_updated\_utc**.
-
-  * `HIGH_NEW`  = maximum of `h` array to **last\_updated\_utc**.
-  * `LOW_NEW`   = minimum of `l` array to **last\_updated\_utc**.
-  * `CLOSE_NEW` = last element of `c` array (same index as **last\_updated\_utc**).
-* In **SECTION 1** of the output, replace the original `"high"`, `"low"`, `"close"` with these refreshed values; leave `"open"` = `OPEN_BASE`.
-* Weekly forecast may be re-estimated if your model logic deems intraday data material; otherwise leave as is.
-
-### 2 — Augment the step-by-step trading plan
+### Section 1 — Augment the step-by-step trading plan
 
 Using all intraday timeframes (1-, 5-, 15-minute):
 
@@ -51,9 +44,9 @@ Immediately **after**, append this mandatory sub‑section:
 
 *Output exactly nine 5‑minute bars.*  If any required input is missing, output the structure with `"no data"` placeholders.
 
-Choose **one** format per report (table **or** JSON) and keep it machine‑readable.
+The 5-Minute Forecast must be a Markdown table—no JSON alternative.
 
-### 3 — Trim the intraday execution plan to the future only
+### Section 2 — Trim the intraday execution plan to the future only
 
 * Determine the current epoch based on **last\_updated\_utc** (UTC) and standard US-equity session segments:
 
@@ -70,28 +63,110 @@ Choose **one** format per report (table **or** JSON) and keep it machine‑reada
 
 * Use the same bullet format (`Trigger`, `Entry`, `Stop-loss`, `Profit-target`, `AI position`) but skip any epochs already completed.
 
-### 4 — Keep the three-section layout EXACTLY
+### Section 3 — Keep the three-section layout EXACTLY
 
-1. **SECTION 1 — concise output**
-
-   ```json
-   {
-     "current_date": "YYYY-MM-DD",
-     "current_day":  { "open": OPEN_BASE, "high": HIGH_NEW, "low": LOW_NEW, "close": CLOSE_NEW },
-     "weekly_forecast": { ... }   // update only if needed
-   }
-   ```
-2. **SECTION 2 — step-by-step trading plan**
+1. **SECTION 1 — step-by-step trading plan**
 (refreshed, richer intraday detail, ≤ 1200 words)
 
-3. **SECTION 3 — intraday execution plan**
+2. **SECTION 2 — intraday execution plan**
 (bullets only for remaining epochs)
 
 
-### 5 — General rules
+### 4 — General rules
 1. Preserve JSON and header labels **exactly**; no schema drift.
 2. Never project beyond today’s close, except for the mandated 45‑minute 5‑min forecast.
 3. Label any missing indicator as `"no data"`.
 4. Warn (“⚠ Data stale”) if `last_updated_utc` older than 10 minutes.
 5. Output **only** the three sections—no preamble or post‑script.
 6. Maintain a polite, friendly tone—no emojis.
+
+
+### EXAMPLE OUTPUT — FOR FORMAT ONLY
+_Do not copy these values; they are placeholders._
+
+---
+
+## SECTION 1 — step-by-step trading plan
+
+**Trend & Momentum**
+• Daily and hourly trend ↓; ADX (14) = 31 shows strong directional strength.
+• RSI (1 h) hovering at 42 with bullish divergence building; anchored VWAP ~1 % above price.
+
+**Volatility & Liquidity**
+• ATR(14) ≈ \$1.10 (1 % of price); realised vol < implied; cumulative volume 78 % of 20-day average.
+
+**Key S/R**
+- **Support:** 99.40 (anchored VWAP), 98.60 (prior swing low)
+- **Resistance:** 101.80 (overnight high), 103.10 (gap fill)
+
+**Active chart patterns**
+• Hourly **Double Bottom** at 98.60 / 99.10 → neckline 101.40 → measured target ≈ 104.20. Historical win-rate last 10 occurrences = 62 % → **statistical target** ≈ 103.20 (aligns with 103.10 resistance).
+• 15-min **Falling Wedge** broke topside at 99.70; typical throw-back area 99.50 → watch for long entries there.
+• Daily “Three Black Crows” completed last week; momentum has since reversed—treat as background, not active.
+
+**Set-ups**
+1. **Throw-back Long at Wedge Support**
+   - **Why:** Pattern theory says post-break re-tests often launch the measured move; bullish RSI divergence supports.
+   - **Entry:** Buy 99.55 on bullish engulfing candle at wedge trendline.
+   - **Stop:** 98.85 (0.7 ATR).
+   - **Targets:** 101.80 (primary from recent swing high), 103.20 (statistical from Double-Bottom).
+   - **Trailing:** Move stop to breakeven after +1 R; then trail 0.6 ATR.
+   - **Probability:** 54 % **RR:** ≈ 2.5 : 1 **EV:** +0.35 R.
+
+2. **Breakdown Short below 98.60 Support**
+   - **Why:** Failure of Double-Bottom invalidates bullish thesis; OBV would likely flip negative.
+   - **Entry:** Sell stop-market 98.55 on 5-min close below 98.60.
+   - **Stop:** 99.30 (0.65 ATR).
+   - **Targets:** 97.30 (recent composite POC), 96.60 runner.
+   - **Trailing:** Hard stop only; no trail until +1.5 R.
+   - **Probability:** 46 % **RR:** ≈ 2 : 1 **EV:** +0.12 R.
+
+**Risk matrix**
+
+| Risk (ATR \$) | 0.5 R Shares | 1 R Shares | 2 R Shares |
+|---------------|--------------|-----------|-----------|
+| \$1.10        | Eq × 0.5 / 1.10 | Eq × 1 / 1.10 | Eq × 2 / 1.10 |
+
+**Invalidate / Update**
+Double-Bottom thesis void if 98.60 prints → cancel long, favour shorts.
+⚠ Data stale warning if `last_updated_utc` exceeds 10 min.
+
+#### 5-Minute Forecast (next 45 min)
+
+| UTC   | Open   | High   | Low    | Close  |
+|-------|--------|--------|--------|--------|
+| 14:15 | 100.00 | 100.20 |  99.90 | 100.10 |
+| 14:20 | 100.10 | 100.35 | 100.00 | 100.25 |
+| 14:25 | 100.25 | 100.50 | 100.10 | 100.40 |
+| 14:30 | 100.40 | 100.60 | 100.25 | 100.50 |
+| 14:35 | 100.50 | 100.75 | 100.35 | 100.65 |
+| 14:40 | 100.65 | 100.90 | 100.50 | 100.80 |
+| 14:45 | 100.80 | 101.05 | 100.65 | 100.95 |
+| 14:50 | 100.95 | 101.20 | 100.80 | 101.05 |
+| 14:55 | 101.05 | 101.30 | 100.90 | 101.15 |
+
+---
+
+## SECTION 2 — intraday execution plan
+
+- **Lunch (16:00–18:00 UTC)**
+  - **Trigger:** Price closes above 101.80 with 5-min volume > 150 % of average.
+  - **Entry:** Buy 101.90 on close.
+  - **Stop-loss:** 100.95 (1 ATR).
+  - **Profit-target:** 103.10 primary; trail 0.7 ATR after +1.5 R.
+  - **AI position:** Long if triggered.
+
+- **Afternoon (18:00–19:30 UTC)**
+  - **Trigger:** OBV divergence + break below 99.40.
+  - **Entry:** Short 99.35 on 5-min close.
+  - **Stop-loss:** 100.05.
+  - **Profit-target:** 97.80 stretch, 97.30 runner.
+  - **AI position:** Short if triggered.
+
+- **Close (19:30–20:00 UTC)**
+  - **Trigger:** Flat all positions five minutes before market close.
+  - **AI position:** Flat by 19:55 UTC.
+
+---
+
+</EXAMPLE_OUTPUT>
