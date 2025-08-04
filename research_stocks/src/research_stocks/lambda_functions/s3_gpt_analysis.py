@@ -16,6 +16,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from openai import OpenAI, OpenAIError
 from typing import Dict, List
+client = OpenAI()
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
