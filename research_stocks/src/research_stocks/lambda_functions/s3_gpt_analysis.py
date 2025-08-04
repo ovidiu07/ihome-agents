@@ -70,8 +70,7 @@ def call_gpt_action_with_json_content(results: dict, filename: str,
                                "Please parse this JSON and produce sections as mentioned in instructions:\n"
                                "Do not add anything else.")})
   model_name = "o3" if is_general_analysis else "gpt-4o-mini"
-  response = client.chat.completions.create(model=model_name, messages=messages,
-                                            temperature=0.0)
+  response = client.chat.completions.create(model=model_name, messages=messages)
   send_email_with_analysis(response.choices[0].message.content, filename)
   logger.info("Model responded with finish_reason=%s",
               response.choices[0].finish_reason)
