@@ -78,19 +78,23 @@ def call_gpt_action_with_json_content(results: dict, filename: str,
 
 
 def send_email_with_analysis(content: str, subject_filename: str):
-  sender_email = os.getenv("SENDER_EMAIL")
-  receiver_raw = os.getenv("RECEIVER_EMAIL")
-  smtp_server = os.getenv("SMTP_SERVER")
+  sender_email = os.getenv("SENDER_EMAIL") or "contact@ihomeprosolutions.ro"
+  receiver_raw = os.getenv("RECEIVER_EMAIL") or "moldovan.ovidiuv@gmail.com, moldovan.iuliae@gmail.com"
+  smtp_server = os.getenv("SMTP_SERVER") or "smtppro.zoho.eu"
   smtp_port = int(os.getenv("SMTP_PORT", 587))
-  smtp_username = os.getenv("SMTP_USERNAME")
-  smtp_password = os.getenv("SMTP_PASSWORD")
-  receiver_list = [email.strip() for email in receiver_raw.split(",") if email.strip()]
-  msg = MIMEMultipart()
+  smtp_username = os.getenv("SMTP_USERNAME") or "contact@ihomeprosolutions.ro"
+  smtp_password = os.getenv("SMTP_PASSWORD") or "Marley01042022$"
 
+  receiver_list = [email.strip() for email in receiver_raw.split(",") if email.strip()]
+
+  if not sender_email or not receiver_list:
+    logger.error("Missing sender or receiver email. Check configuration.")
+    return
+
+  msg = MIMEMultipart()
   msg["From"] = sender_email
   msg["To"] = ", ".join(receiver_list)
   msg["Subject"] = f"Check your new analysis report for: {subject_filename}"
-
   msg.attach(MIMEText(content, "plain"))
 
   try:
@@ -98,11 +102,9 @@ def send_email_with_analysis(content: str, subject_filename: str):
       server.starttls()
       server.login(smtp_username, smtp_password)
       server.sendmail(sender_email, receiver_list, msg.as_string())
-
-      logger.info("Sent analysis email to %s", receiver_list)
+      logger.info("Sent analysis email to: %s", ", ".join(receiver_list))
   except Exception as e:
     logger.error("Failed to send email: %s", e)
-
 
 def save_analysis(bucket: str, key: str, analysis: str):
   """Save analysis text to S3 under the specified key."""
