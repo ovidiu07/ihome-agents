@@ -25,6 +25,9 @@ All keys are constant; values reflect the latest intraday state.
 
 * From `previous_daily_report_md`, locate **SECTION 1**.
 * Read the `current_day.open` value **only**; call it `OPEN_BASE`.
+* The minute‐bar arrays (`o`, `h`, `l`, `c`, `v`, `t`) are in **chronological ASCENDING** order (earliest → latest).
+  The element whose `t` timestamp equals `intraday_json.fintech_one_minute.last_updated_utc`—usually the **last element**—is the most‑recent complete candle.
+  Use that exact index for `CLOSE_NEW`, and cap all HIGH/LOW calculations at that same index (do not look ahead).
 * **Do not change **\`\`** under any circumstance.**
 
 

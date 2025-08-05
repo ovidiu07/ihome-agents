@@ -211,8 +211,8 @@ def start_scheduler() -> BackgroundScheduler:
                       kwargs={"is_general_analysis": True}, )
 
   # Intraday analysis times (17:00, 18:30, and 19:30)
-  intraday_analysis_times = [(17, 0), (17, 20), (17, 40), (18, 0), (18, 40), (19, 0),
-                             (20, 0), (20, 40), (21, 0), (21, 30)]
+  intraday_analysis_times = [(17, 0), (17, 20), (17, 40), (18, 0), (18, 40), (19, 0), (19, 20), (19, 40),
+                             (20, 0), (20, 40), (21, 0), (21, 30), (21, 50)]
   for hour, minute in intraday_analysis_times:
     scheduler.add_job(process_today_symbols, "cron", day_of_week="mon-fri",
                       hour=hour, minute=minute,
