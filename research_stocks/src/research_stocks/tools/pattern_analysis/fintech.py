@@ -206,27 +206,70 @@ class TechnicalIndicatorResponse(BaseModel):
     extra = "allow"
 
 
-def get_candles(symbol: str, resolution: str, start: datetime, end: datetime,
-    session: Optional[requests.Session] = None, ) -> CandleResponse:
-  """Return OHLCV candles for ``symbol`` between ``start`` and ``end``."""
-  params = {"symbol": symbol.upper(), "resolution": resolution,
-    "from": int(start.timestamp()), "to": int(end.timestamp()), }
-  logger.warning(
-    f"No candle data returned for {symbol} between {start} and {end}, falling back to yfinance")
-  # Map resolution to yfinance interval
-  interval = f"{resolution}m" if resolution.isdigit() else (
-    "1d" if resolution.upper() == "D" else "1wk")
-  # Fetch from yfinance
-  df = yf.Ticker(symbol).history(start=start, end=end, interval=interval,
-                                 prepost=True)
-  if df.empty:
-    raise ValueError("No candle data available from yfinance fallback")
-  df = df.tail(60)  # ✅ Keep only the most recent 60 candles
-  # Build the same dict shape
-  data = {"o": df["Open"].tolist(), "h": df["High"].tolist(),
-    "l": df["Low"].tolist(), "c": df["Close"].tolist(),
-    "v": df["Volume"].astype(float).tolist(),
-    "t": [int(ts.timestamp()) for ts in df.index.to_pydatetime()], "s": "ok"}
+def get_candles(
+    symbol: str,
+    resolution: str,
+    start: datetime,
+    end: datetime,
+    session: Optional[requests.Session] = None,
+) -> CandleResponse:
+  """Return OHLCV candles for symbol and resolution between start and end."""
+  sess = session or _DEFAULT_SESSION
+  interval = (
+    f"{resolution}m"
+    if resolution.isdigit()
+    else "1d"
+    if resolution.upper() == "D"
+    else "1wk"
+  )
+
+  try:
+    df = yf.Ticker(symbol).history(
+        start=start, end=end, interval=interval, prepost=True
+    )
+    if not df.empty:
+      df = df.tail(60)
+      data = {
+        "o": df["Open"].tolist(),
+        "h": df["High"].tolist(),
+        "l": df["Low"].tolist(),
+        "c": df["Close"].tolist(),
+        "v": df["Volume"].astype(float).tolist(),
+        "t": [int(ts.timestamp()) for ts in df.index.to_pydatetime()],
+        "s": "ok",
+      }
+      return CandleResponse.model_validate(data)
+  except Exception as e:
+    logger.warning("yfinance fetch failed: %s", e)
+
+  # --------- Finnhub Fallback ---------
+  logger.info(
+      "Falling back to Finnhub candle data for %s/%s from %s to %s",
+      symbol,
+      resolution,
+      start,
+      end,
+  )
+  params = {
+    "symbol": symbol.upper(),
+    "resolution": resolution,
+    "from": int(start.timestamp()),
+    "to": int(end.timestamp()),
+  }
+  fb_data = _call_finnhub("/stock/candle", params, sess)
+  if not fb_data or fb_data.get("s") != "ok":
+    raise ValueError("No candle data from Finnhub fallback")
+
+  # Convert timestamps and ensure list alignment
+  data = {
+    "o": fb_data["o"],
+    "h": fb_data["h"],
+    "l": fb_data["l"],
+    "c": fb_data["c"],
+    "v": fb_data["v"],
+    "t": [int(ts) for ts in fb_data["t"]],
+    "s": fb_data.get("s", "ok"),
+  }
   return CandleResponse.model_validate(data)
 
 
@@ -412,6 +455,15 @@ def fetch_all(symbol: str, resolution: str = "D", lookback_days: int = 2,
   sess = session or requests.Session()
 
   candles = get_candles(symbol, resolution, start, end, sess)
+  # ------------------------------------------------------------------
+  # Compute session extremes and last OHLC from the 1‑minute candles
+  # ------------------------------------------------------------------
+  session_high = session_low = last_open = last_close = None
+  if candles and isinstance(candles, CandleResponse) and candles.h:
+      session_high = max(candles.h)
+      session_low = min(candles.l)
+      last_open = candles.o[-1]
+      last_close = candles.c[-1]
   patterns = get_pattern_recognition(symbol, resolution, sess)
   support_resistance = get_support_resistance(symbol, resolution, sess)
   aggregate_indicator = get_aggregate_indicator(symbol, resolution, sess)
@@ -419,6 +471,10 @@ def fetch_all(symbol: str, resolution: str = "D", lookback_days: int = 2,
   result = {"symbol": symbol.upper(), "resolution": resolution,
     "last_updated_utc": end.isoformat() + "Z",
     "candles": candles.dict() if candles else {},
+    "session_high": session_high,
+    "session_low": session_low,
+    "last_open": last_open,
+    "last_close": last_close,
     "patterns": patterns.dict().get("points", []) if patterns else [],
     "support_resistance": support_resistance.dict() if support_resistance else {},
     "aggregate_indicator": aggregate_indicator.dict() if aggregate_indicator else {}, }

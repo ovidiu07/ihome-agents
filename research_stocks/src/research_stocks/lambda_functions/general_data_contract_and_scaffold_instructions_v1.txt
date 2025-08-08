@@ -1,0 +1,183 @@
+PRE-OPEN DAILY FORECAST CONTRACT — v3.5 (2025-08-08)
+
+## Scope & Inputs (no other data allowed)
+- data: single JSON with blocks:
+  • fintech_daily, fintech_hourly, fintech_weekly (schema: last_updated_utc; candles {o,h,l,c,v,t}; patterns[]; support_resistance.levels[]; aggregate_indicator; technical_indicators)
+  • optionally fintech_one_minute/five_minutes/fifteen_minutes (used ONLY for pre-market GAP classification if t < 13:30 UTC)
+  • next_prediction_from_finnhub.daily / weekly (+ component_forecasts)
+- Report is **pre-open** and forecasts **today’s daily bar** only. Intraday patterns (1/5/15m) are *not* used other than gap bias.
+
+## Market session & timestamps
+- US equities RTH: 13:30–20:00 UTC. “Today” = data.current_date (UTC aware).
+- Any intraday candle on current_date with t < 13:30 UTC is **pre-market**.
+
+## Anchors
+- PCLOSE = last complete **daily** close before current_date.
+- If pre-market exists: PREMKT_LAST = last pre-open close; GAP = PREMKT_LAST − PCLOSE; else "no data".
+- ATR_D14 = daily ATR(14); ATR_W14 = weekly ATR(14). If missing, "no data".
+
+## Indicator enumeration (must-cover)
+You MUST enumerate and audit indicators on **Daily (D)**, **Hourly (H)**, **Weekly (W)**. Include these names even if missing for a TF (write "no data" if absent):
+
+SMA, EMA, WMA, DEMA, MACD, MACDEXT, STOCH, STOCHF, RSI, STOCHRSI, WILLR, ADX, ADXR, APO, PPO, MOM, BOP, CCI, CMO, ROC, ROCR, AROON, AROONOSC, MFI, TRIX, ULTOSC, DX, MINUSDI, PLUSDI, MINUSDM, PLUSDM, BBANDS, MIDPOINT, MIDPRICE, SAR, TRANGE, ATR, NATR, AD, ADOSC, OBV.
+
+Also include any additional indicator keys under each timeframe’s `technical_indicators`.
+
+### Primary field per indicator (for “last” & “dir”)
+SMA→sma, EMA→ema, WMA→wma, DEMA→dema,
+MACD/MACDEXT→macdHist,
+STOCH→slowk, STOCHF→fastk, STOCHRSI→fastk,
+RSI→rsi, WILLR→willr, ADX→adx, ADXR→adxr,
+APO→apo, PPO→ppo, MOM→mom, BOP→bop, CCI→cci, CMO→cmo, ROC→roc, ROCR→rocr,
+AROON→aroonup (use aroondown for evidence), AROONOSC→aroonosc,
+MFI→mfi, TRIX→trix, ULTOSC→ultosc, DX→dx,
+MINUSDI→minusdi, PLUSDI→plusdi, MINUSDM→minusdm, PLUSDM→plusdm,
+BBANDS→middleband (use upperband/lowerband as evidence),
+MIDPOINT→midpoint, MIDPRICE→midprice, SAR→sar,
+TRANGE→trange, ATR→atr, NATR→natr, AD→ad, ADOSC→adosc, OBV→obv.
+
+If a primary field is missing for (indicator, TF) → "no data".
+
+## Indicator Audit (D/H/W) — table
+Create a Markdown table named **Indicator Audit (D/H/W)**:
+
+Indicator | D last | D dir | H last | H dir | W last | W dir | Signal
+
+- “last”: most recent primary-field value up to the latest bar for that TF (rounded).
+- “dir”: slope over the last 3 points → {rising, falling, flat}; if <2 points → "no data".
+- **Signal rules (deterministic)**:
+  • RSI: >55 bull; <45 bear; else neutral
+  • MACD/MACDEXT: macdHist>0 bull; <0 bear; else neutral
+  • STOCH/STOCHF/STOCHRSI: k>d and k rising → bull; k<d and k falling → bear; else neutral (if d missing, k>55 bull, k<45 bear)
+  • WILLR: >−20 bull; <−80 bear; else neutral
+  • ADX/ADXR: <20 neutral; ≥20 → +DI>−DI bull; −DI>+DI bear; if DI missing → neutral
+  • DI/DM: PLUSDI>MINUSDI & PLUSDM>MINUSDM → bull; inverse → bear; else neutral
+  • MFI: >55 bull; <45 bear; else neutral
+  • CCI: >+100 bull; <−100 bear; else neutral
+  • MOM/ROC/ROCR/TRIX: primary>0 & rising → bull; <0 & falling → bear; else neutral
+  • ULTOSC: >50 bull; <45 bear; else neutral
+  • AROON/AROONOSC: aroonup>70 & aroondown<30 → bull; reverse → bear; else neutral
+  • MA family (SMA/EMA/WMA/DEMA): close_TF > MA & MA rising → bull; close_TF < MA & MA falling → bear; else neutral
+  • BBANDS: close>middle & (upper−close)<(close−lower) → bull; close<middle & (close−lower)<(upper−close) → bear; else neutral
+  • SAR: close above SAR → bull; below → bear
+  • OBV/AD/ADOSC: rising 3 pts with price up → bull; falling with price down → bear; else neutral
+  • ATR/NATR/TRANGE/MIDPOINT/MIDPRICE/DX: neutral (range/regime only)
+
+If an indicator exists in JSON but is not shown → after the table print:
+⚠ Coverage gap: missing rows for: name@TF, ...
+
+## NEW — Per-Indicator Interpretation (trader-speak)
+Immediately below the audit, add **Per-Indicator Interpretation**:
+
+- For every **non-neutral** indicator cell in the table (across D/H/W), print one short line:
+  `<name>@<TF>: <value> <dir> → <implication>`
+
+Examples:
+- `RSI@D: 61.9 rising → bullish momentum with room before overbought`
+- `MACD@H: 0.43 flat → bullish impulse stalling intraday`
+- `PLUSDI@D > MINUSDI@D while ADX@D=39 → trend-following dip buys favored`
+
+If D and H conflict, add: `Conflict D vs H: favor TF with ADX≥25; else Neutral.`
+
+## Bias computation (deterministic)
+### 1) Score each non-neutral signal
+- Map bull → +1, bear → −1 (neutral → 0).
+
+### 2) Class weights (by indicator family)
+- Trend/MA = 0.30 (SMA/EMA/WMA/DEMA/ADX/DI/DM/SAR/AROON)
+- Momentum = 0.25 (RSI/MACD/MACDEXT/MOM/ROC/ROCR/TRIX/CMO/ULTOSC)
+- Oscillators = 0.15 (STOCH/STOCHF/STOCHRSI/WILLR/CCI/MFI)
+- Volume/Flow = 0.10 (OBV/AD/ADOSC/BOP)
+- Volatility/Regime = 0.20 (ATR/NATR/BBANDS bandwidth, TRANGE, DX)
+
+### 3) Timeframe weights
+- wD = 0.50, wH = 0.30, wW = 0.20.
+- If Weekly technicals missing → wW=0.00 and print: `⚠ Weekly data unavailable — weekly weight reduced`.
+- If Daily ADX≥25 and Hourly ADX<25: amplify D group by ×1.15; if Hourly ADX≥25 and Daily ADX<25: amplify H group by ×1.15.
+
+### 4) Compute S (−1…+1)
+- For each signal: signed_score = (+1 or −1) × class_weight × TF_weight.
+- Sum all signed_scores, normalize by the max possible sum for present signals, clip to [−1, +1].
+- Output: `Bias score S = <value> → {Bullish if S>0.25 | Neutral if −0.25≤S≤0.25 | Bearish if S<−0.25}`.
+- Also list **Top 5 drivers by absolute contribution** as `name@TF`.
+
+## Pre-market gap model (if available)
+- g = |GAP| / ATR_D14. Classify: g<0.3 common; 0.3–0.8 breakaway candidate; >0.8 large.
+- If D & W bullish and gap up → increase upside share; if both bearish and gap down → increase downside share.
+- If OBV(H) contradicts gap direction → haircut adjustment by 40%.
+
+## Forecast Engine (today only; OHLC from indicators + volatility)
+We forecast `{open, high, low, close}` for **today’s daily bar**.
+
+1) **Baselines**
+   - O₀ = next_prediction_from_finnhub.daily.open if present else PCLOSE.
+   - C₀ = Finnhub daily close if present else PCLOSE.
+   - R_base = ATR_D14 × regime_factor, where regime_factor from ATR14/ATR50 on D:
+     <0.8 → 0.8; 0.8–1.2 → 1.0; >1.2 → 1.2.
+   - If BB bandwidth in lower 20% (D) → R_base ×= 0.85; if upper 80% → ×= 1.15.
+
+2) **Apply bias S (directional tilt)**
+   - CLOSE = C₀ + sign(S) × min(0.40×ATR_D14, |S|×0.60×ATR_D14).
+   - OPEN: if pre-market exists, shift O₀ toward PREMKT_LAST by ±min(0.25×ATR_D14, |GAP|); else OPEN=O₀.
+
+3) **Distribute range around O/C (bounded)**
+   - Upside share u = 0.5 + 0.3×max(S,0) (clip 0.35–0.80)
+   - Downside share d = 0.5 + 0.3×max(−S,0) (clip 0.35–0.80)
+   - HIGH = max(OPEN, CLOSE) + u × R_base
+   - LOW  = min(OPEN, CLOSE) − d × R_base
+
+4) **Clamps & sanity**
+   - HIGH ≥ max(OPEN,CLOSE); LOW ≤ min(OPEN,CLOSE)
+   - (HIGH−LOW) ≤ 2.2×ATR_D14
+   - If Weekly trend opposes S strongly (|S|>0.5), reduce the against-trend side by 20–40%.
+   - If constraints fail, shrink u & d proportionally until valid.
+
+5) **Weekly forecast (current week)**
+   - Blend Finnhub weekly (if present) with Weekly signals (0.6/0.4). Clamp total range ≤ 1.8×ATR_W14 and do not violate already printed weekly highs/lows.
+
+## SECTION 2 — Prediction Summary (must include)
+At the top of SECTION 2, before S/R and setups, include this exact block:
+
+- **Predicted Bias:** {Bullish|Neutral|Bearish} (S = <value>, prevailing TF = {D|H|W})
+- **Expected Range (R_base):** ~<R_base> (ATR-adjusted)
+- **Forecast OHLC:** O <OPEN>, H <HIGH>, L <LOW>, C <CLOSE>
+- **Top Drivers:** <top5 drivers as name@TF>
+- **Key Invalidation:** If price prints below <nearest strong support> (for Bullish) or above <nearest strong resistance> (for Bearish), downgrade bias one step.
+
+Then continue with:
+- **S/R with source** (3–5 per side: `price — source(why)` with touch date if known)
+- **Per-Indicator Interpretation** (already defined)
+- **Set-ups** (2–3 with Entry, Stop (ATR-based), Targets, Trailing). After each setup add `[Signals: ...]`.
+- **Validation & band:** If Finnhub history exists (≤30d), print `Validation: MAE≈X, bias≈Y (removed)`. Also print `Confidence band (±1σ): ±(0.60×ATR_D14); Touch-prob tilt = {low|med|high} by |S|`.
+
+## Weekly data handling
+- If fintech_weekly missing OR weekly technicals empty → wW=0.00 and append the note under the audit; proceed without weekly signals.
+
+## Numeric formatting
+- **No abbreviations** (no K/M/B). Volumes/flows must be raw integers. Prices 2 decimals. UTC HH:MM.
+
+## Compliance footer
+At end of SECTION 2 add:
+**Audit Pass:** indicators audited={{N_total}}, bullish={{N_bull}}, bearish={{N_bear}}, neutral={{N_neutral}}, missing={{N_missing}}
+If `missing>0` OR a coverage gap line exists, also print:
+`⚠ Forecast risk: indicator coverage incomplete — forecast range contracted 10%.`
+(Apply the 10% contraction to HIGH/LOW before printing JSON in SECTION 1.)
+
+## Patterns scope (pre-open)
+Use patterns only from **Daily/Hourly/Weekly** that complete before today. Intraday (1/5/15m) patterns are out of scope (ignore them).
+
+## Output — EXACTLY THREE SECTIONS
+
+### SECTION 1 — concise output (JSON only)
+{
+  "current_date": "YYYY-MM-DD",
+  "current_day":  { "open": <float>, "high": <float>, "low": <float>, "close": <float> },
+  "weekly_forecast": { "open": <float>, "high": <float>, "low": <float>, "close": <float> }
+}
+
+### SECTION 2 — step-by-step trading plan (≤ ~650 words)
+(Starts with **Prediction Summary** block above; then S/R; Per-Indicator Interpretation; Set-ups; Validation/band; **Audit Pass** line.)
+
+### SECTION 3 — intraday execution plan (pre-open template)
+Pre-Open → Open Range → Mid-Morning → Lunch → Afternoon → Close.
+For each: Trigger, Entry, Stop-loss, Profit-target & scaling, Exit; end with “AI position: long/short/flat”.

@@ -44,11 +44,23 @@ def generate_presigned_url(bucket: str, key: str, expiration: int = 300) -> str:
     raise
 
 
-def load_system_instructions(is_general_analysis: bool = True) -> str:
+def load_system_persona_tiny(is_general_analysis: bool = True) -> str:
   """Load system instructions for the GPT call from S3."""
   try:
     key = (
-      "gpt/instructions.txt" if is_general_analysis else "gpt/intraday_instructions_v2.txt")
+      "gpt/general_system_persona_instructions_v1.txt" if is_general_analysis else "gpt/intraday_system_persona_instructions_v1.txt")
+    obj = s3_client.get_object(Bucket="devtailor-transactions", Key=key)
+    return obj["Body"].read().decode("utf-8")
+  except ClientError as e:
+    logger.error("Could not fetch instructions from S3: %s", e)
+    return "Default fallback instructions here..."
+
+
+def load_data_contract_and_scaffold(is_general_analysis: bool = True) -> str:
+  """Load system instructions for the GPT call from S3."""
+  try:
+    key = (
+      "gpt/general_data_contract_and_scaffold_instructions_v1.txt" if is_general_analysis else "gpt/intraday_data_contract_and_scaffold_instructions_v1.txt")
     obj = s3_client.get_object(Bucket="devtailor-transactions", Key=key)
     return obj["Body"].read().decode("utf-8")
   except ClientError as e:
@@ -82,56 +94,49 @@ def _validates(markdown: str) -> bool:
 # ---------------------------------------------------------------------------
 # Core wrapper
 # ---------------------------------------------------------------------------
-def call_gpt_action_with_json_content(results: Dict, filename: str,
-    is_general_analysis: bool = True, previous_report: str | None = None,
-    max_retries: int = 1, ) -> str:
-  """
-  Call OpenAI with system + user messages and JSON payload.
-  Enforce deterministic sampling for intraday (gpt-4o-mini) and
-  schema-validate the response.
-  """
-  system_prompt = load_system_instructions(is_general_analysis)
+def call_gpt_action_with_json_content(
+    results: dict,
+    filename: str,
+    is_general_analysis: bool = True,
+    previous_report: str | None = None,
+    max_retries: int = 1,
+) -> str:
+  SYSTEM_A = load_system_persona_tiny(is_general_analysis)              # tiny & stable
+  DEV_B    = load_data_contract_and_scaffold(is_general_analysis)       # long & stable
   json_content = json.dumps(results, indent=2)
 
-  messages: List[Dict[str, str]] = [
-    {"role": "system", "content": system_prompt}]
-
-  # Add previous report context for intraday updates
+  # Build the runtime "C" message
+  user_parts = []
   if not is_general_analysis and previous_report:
-    messages.append({"role": "user",
-      "content": ("Here is the previous general analysis report:\n\n"
-                  f"{previous_report}\n\n"
-                  "Update this report as instructed using the intraday data.")})
+    user_parts.append("previous_daily_report_md:\n" + previous_report)
+  user_parts.append(f"intraday_json (file={filename}):\n{json_content}")
+  user_parts.append("TASK: Parse anchors and render SECTIONS 1–3 exactly as per the contract. No extra sections.")
+  USER_C = "\n\n".join(user_parts)
 
-  # Always attach the current JSON snapshot
-  messages.append({"role": "user",
-    "content": (f"Here is the JSON file named {filename}:\n\n"
-                f"{json_content}\n\n"
-                "Please parse this JSON and produce sections as specified. "
-                "Do not add anything else.")})
+  messages = [
+    {"role": "system",    "content": SYSTEM_A},   # A (cacheable)
+    {"role": "developer",    "content": DEV_B},      # B (cacheable; use 'developer' role if your SDK supports it)
+    {"role": "user",      "content": USER_C},     # C (runtime)
+  ]
 
-  # ---------------------------------------------------------------------
-  # Model-specific parameters
-  # ---------------------------------------------------------------------
-  if is_general_analysis:
-    model_name = "o3"
-    kwargs = {}  # server defaults (temp≈1)
-  else:
-    model_name = "gpt-4o-mini"
-    kwargs = {"temperature": 0, "top_p": 0, "seed": 42
-      # supported by v2 chat API
-    }
+  model_name = "gpt-4o-mini" if not is_general_analysis else "o3"
+  kwargs = {"temperature": 0, "seed": 42} if not is_general_analysis else {}
 
-  # ---------------------------------------------------------------------
-  # Straightforward retry loop with schema validation
-  # ---------------------------------------------------------------------
-  resp = client.chat.completions.create(model=model_name, messages=messages,
-      **kwargs)
+  resp = client.chat.completions.create(model=model_name, messages=messages, **kwargs)
   content = resp.choices[0].message.content
+
+  # Monitor caching: cached token count appears here on supported models
+  try:
+    usage = resp.usage
+    cached = getattr(usage, "prompt_tokens_details", {}).get("cached_tokens", 0)
+    logger.info("finish_reason=%s cached_tokens=%s total_prompt=%s",
+                resp.choices[0].finish_reason, cached, usage.prompt_tokens if usage else None)
+  except Exception:
+    pass
+
   send_email_with_analysis(content, filename)
-  logger.info("Model responded ok (finish_reason=%s)",
-      resp.choices[0].finish_reason, )
   return content
+
 
 
 def send_email_with_analysis(content: str, subject_filename: str):

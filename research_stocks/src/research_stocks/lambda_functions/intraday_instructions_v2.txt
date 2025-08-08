@@ -28,8 +28,11 @@ All keys are constant; values reflect the latest intraday state.
 * The minute‐bar arrays (`o`, `h`, `l`, `c`, `v`, `t`) are in **chronological ASCENDING** order (earliest → latest).
   The element whose `t` timestamp equals `intraday_json.fintech_one_minute.last_updated_utc`—usually the **last element**—is the most‑recent complete candle.
   Use that exact index for `CLOSE_NEW`, and cap all HIGH/LOW calculations at that same index (do not look ahead).
-* Also capture that same candle’s **open, high, low, close, volume** →
-  `LAST_O`, `LAST_H`, `LAST_L`, `LAST_C`, `LAST_V`. These are the most‑recent intraday values.
+* Read `intraday_json.session_high`, `intraday_json.session_low`,
+  `intraday_json.last_open`, `intraday_json.last_close`
+  into `HI_SESSION`, `LO_SESSION`, `LAST_O`, `LAST_C`.
+  (These fields always exist; no need to recompute from arrays.)
+
 * **Do not change **``** under any circumstance.**
 
 
@@ -38,11 +41,17 @@ All keys are constant; values reflect the latest intraday state.
 * At the very top of **SECTION 1**, output a single bold line, exactly:
 
   ```
-  **Latest ({{last_updated_utc}}) — O:{{LAST_O}} H:{{LAST_H}} L:{{LAST_L}} C:{{LAST_C}} V:{{LAST_V}}**
+  **Latest ({{last_updated_utc}}) — O:{{LAST_O}}  Hmax:{{HI_SESSION}}  Lmin:{{LO_SESSION}}  C:{{LAST_C}}  V:{{LAST_V}}**
   ```
 
   Replace the double‑braced placeholders with the captured numbers.
   The line must appear **before** the “Trend & Momentum” subsection so the reader (and downstream code) can verify the raw inputs.
+
+* `Hmax:` and `Lmin:` are the session’s highest high and lowest low to date.
+  `O`, `C`, and `V` come from the final 1‑minute candle.
+
+* You must treat `LAST_O`, `HI_SESSION`, `LO_SESSION`, `LAST_C` as the
+  primary anchors for all intraday calculations and forward forecasts.
 
 ### 0.2 — Incorporate `next_prediction_from_finnhub`
 
@@ -101,6 +110,7 @@ When `next_prediction_from_finnhub` is present, the table must mirror its `timef
 
 ### 4 — General rules
 1. Preserve JSON and header labels **exactly**; the new bold “Latest (…)” line is allowed anywhere inside SECTION 1 but must not alter headings.
+1a. The “Latest (…)” line must show: last **open**, session **Hmax**, session **Lmin**, last **close**, last **volume** (in that exact order).
 2. Never project beyond today’s close, except for the mandated 45‑minute 5‑min forecast.
 2a. When using `next_prediction_from_finnhub`, do not alter its `open` field —only `low`, `high`, and `close` may be modified.
 3. Label any missing indicator as `"no data"`.
@@ -116,7 +126,7 @@ _Do not copy these values; they are placeholders._
 
 ## SECTION 1 — step-by-step trading plan
 
-**Latest (14:39 UTC) — O:174.15 H:174.26 L:174.02 C:174.20 V:183 194**
+**Latest (14:59 UTC) — O:174.61  Hmax:176.00  Lmin:173.95  C:174.20  V:183194**
 
 **Trend & Momentum**
 • Daily and hourly trend ↓; ADX (14) = 31 shows strong directional strength.
