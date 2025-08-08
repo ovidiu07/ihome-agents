@@ -1,221 +1,141 @@
-INTRADAY DATA CONTRACT & SCAFFOLD — v2.8 (2025-08-08)
 
-## Inputs
-- previous_daily_report_md: previous daily markdown for the SAME symbol. Read only SECTION 1 → `current_day.open` into OPEN_BASE.
-- intraday_json: intraday snapshot with:
-  • timeframe blocks (`fintech_one_minute`, `fintech_five_minutes`, `fintech_fifteen_minutes`) with arrays `o,h,l,c,v,t` (ASC time) and `technical_indicators`
-  • precomputed anchors: `session_high`, `session_low`, `last_open`, `last_close` (and optionally `last_volume`)
-  • optional `next_prediction_from_finnhub` (array of 5-min forecast bars)
+INTRADAY REPORT — concise, indicator-driven, pattern-complete (v3)
 
-Only these two inputs may be used. Ignore `fintech_hourly` for the audit (you may cite it qualitatively in Trend notes, but it must NOT change the audit, bias, or forecast math).
+Model: gpt-4o-mini
+Goal: Produce a concise, fully-actionable intraday trading report that (1) uses ONLY values present in the provided JSON, (2) silently analyzes all indicators across EVERY timeframe block, and (3) enumerates ALL patterns found in EVERY finnhub_* / fintech_* block, now with a readable Pattern Digest that explains status and next-use. Output must be short, structured, decision-oriented (buy/sell/why/when), and human-friendly — without printing indicator lists or audit tables or inventing numbers.
 
-## Anchor precedence, indexing & consistency
-Authoritative anchors (use as truth if present):
-- LAST_O = intraday_json.last_open
-- LAST_C = intraday_json.last_close
-- LAST_V = intraday_json.last_volume (else v[k])
-- HI_SESSION = intraday_json.session_high  (do not recompute)
-- LO_SESSION = intraday_json.session_low   (do not recompute)
+----------------------------------------------------------------
+INPUTS
+----------------------------------------------------------------
+- intraday_json: A single JSON object that may contain any number of timeframe blocks. A timeframe block is any top-level key whose name matches ^(finnhub_|fintech_). Examples: finnhub_one_minute, finnhub_five_minutes, finnhub_fifteen_minutes, etc.
+  • Each block may include: candles (OHLCV with UTC timestamps), technical_indicators (name/value pairs), support_resistance.levels, session_high, session_low, last_open, last_close, last_volume, next_prediction_from_finnhub (optional), patterns (array, optional).
+- previous_daily_report_md: Use ONLY to extract SECTION 1 → current_day.open as OPEN_BASE if present. Ignore all other content.
 
-Index k:
-1) Let t[] be fintech_one_minute.candles.t. Let T* = intraday_json.fintech_one_minute.last_updated_utc.
-2) If ∃i: t[i] == T* then k=i; else k = max{i | t[i] ≤ T*}; if none, k=len(t)-1 and emit anchor-mismatch warning.
-3) Cap ALL computations (VWAP/ATR/OBV/high/low/patterns) to bars with t ≤ t[k] (no look-ahead).
+STRICT DATA POLICY
+- Use ONLY values from intraday_json and OPEN_BASE (if available). No invented numbers. If a required field is missing, degrade gracefully or mark “No-trade: insufficient edge”.
+- Times: report in UTC HH:MM. Prices: round to 2 decimals. Volume: integer. Never cite external data.
+- “last_updated_utc”: derive as the latest timestamp among available candles in the finest timeframe; if the JSON provides a direct field, prefer that.
 
-Anchor vs bar cross-check (non-blocking):
-- If o[k] differs from LAST_O or c[k] from LAST_C by > $0.01: still use anchors; print:
-  ⚠ Anchor mismatch: using provided last_open/last_close over bar[k].
-- If last_volume missing, set LAST_V = v[k].
+----------------------------------------------------------------
+TIMEFRAME DISCOVERY & PRIORITY
+----------------------------------------------------------------
+- Detect ALL blocks whose keys match ^(finnhub_|fintech_). Process every one.
+- For bias and trade rules, prefer 15m > 5m > 1m if multiple blocks exist; otherwise use whichever are available.
+- When naming a block in output, use TF=<the exact block key> so the reader can trace provenance.
 
-## Mandatory "Latest" line (top of SECTION 1)
-Print EXACTLY:
-**Latest ({{last_updated_utc}}) — O:{{LAST_O}}  Hmax:{{HI_SESSION}}  Lmin:{{LO_SESSION}}  C:{{LAST_C}}  V:{{LAST_V}}**
+----------------------------------------------------------------
+INDICATOR LOGIC (INTERNAL ONLY — DO NOT LIST THEM)
+----------------------------------------------------------------
+- Read all indicators present under each block’s technical_indicators (or equivalent field if present).
+- Aggregate indicator signals into an Intraday Bias score S in [−1.00, +1.00].
+  • Timeframe weights (if all three exist): 15m=0.45, 5m=0.35, 1m=0.20. If a TF is missing, renormalize weights across those present.
+  • Category hints (non-exhaustive): trend (e.g., ADX, DMI, MA slope, MACD), momentum (RSI, Stoch), volatility (ATR, BB width), volume/flow (OBV, MFI), mean-reversion (distance to VWAP/MAs). Use deterministic rules.
+- Compute but do NOT print any per-indicator audit table. Only expose:
+  • Intraday Bias label {Bullish|Neutral|Bearish} + numeric S
+  • Top 3–5 drivers as short tags: indicator_or_rule@TF (no values)
+- Anchors: Prefer JSON-provided VWAP. If ATR is provided at multiple TFs, prefer 5m ATR(14); fallback to 1m scaled or 15m unscaled. OBV delta is relative to session open if obtainable. If VWAP/ATR cannot be computed/read, trade setups requiring them must be skipped.
 
-Then at most one of each warning line (if applicable):
-- ⚠ Data stale   (if last_updated_utc older than 10 minutes relative to t[k])
-- ⚠ Anchor mismatch: using provided last_open/last_close over bar[k].
+----------------------------------------------------------------
+TRIGGER SOURCE SET (for numeric trade steps — prevents hallucination)
+----------------------------------------------------------------
+The ONLY allowed numeric trigger/level sources are:
+{VWAP, session_high, session_low, last_open, last_close, support_resistance.levels (e.g., S1,S2,R1,R2), any pattern.entry/stoploss/profit1/profit2, OPEN_BASE}.
+Derived prices allowed: X ± k×ATR5 where k ∈ {0.3, 0.5, 1.0} and X ∈ the set above. Do NOT invent other numbers.
 
-## Indicator enumeration (explicit coverage)
-You MUST include rows for the following indicator names per timeframe, even if absent (write "no data"):
-1m (41): SMA, EMA, WMA, DEMA, MACD, MACDEXT, STOCH, STOCHF, RSI, STOCHRSI, WILLR, ADX, ADXR, APO, PPO, MOM, BOP, CCI, CMO, ROC, ROCR, AROON, AROONOSC, MFI, TRIX, ULTOSC, DX, MINUSDI, PLUSDI, MINUSDM, PLUSDM, BBANDS, MIDPOINT, MIDPRICE, SAR, TRANGE, ATR, NATR, AD, ADOSC, OBV
-5m (40): same list but BBANDS may be missing → still include row (write "no data" if absent)
-15m (41): same as 1m
+Indicator thresholds allowed in conditions: RSI ∈ {30, 40, 45, 50, 55, 60, 70}; ADX≥{20,25}; Stoch crossovers; “reclaim above VWAP/entry/level” states. Do NOT invent other thresholds.
 
-Also enumerate any extra indicators under:
-- <tf>.technical_indicators
-- <tf>.indicators
-- <tf>.features
-If any indicator exists in JSON but is NOT shown, append after the audit table:
-⚠ Coverage gap: missing rows for: name@tf, ...
+----------------------------------------------------------------
+SUPPORT / RESISTANCE
+----------------------------------------------------------------
+- If support_resistance.levels are present in a block, use them. Otherwise infer from recent swing highs/lows and obvious round numbers (00/50) using the block’s candles.
+- Output exactly 2–4 supports and 2–4 resistances total (across blocks), each with a one-line rationale.
+- Prefer levels from the mid/high priority TFs (15m, 5m).
 
-## Primary field per indicator (deterministic "last"/"dir")
-SMA→sma, EMA→ema, WMA→wma, DEMA→dema,
-MACD/MACDEXT→macdHist,
-STOCH→slowk, STOCHF→fastk, STOCHRSI→fastk,
-RSI→rsi, WILLR→willr, ADX→adx, ADXR→adxr,
-APO→apo, PPO→ppo, MOM→mom, BOP→bop, CCI→cci, CMO→cmo, ROC→roc, ROCR→rocr,
-AROON→aroonup (use aroondown for evidence), AROONOSC→aroonosc,
-MFI→mfi, TRIX→trix, ULTOSC→ultosc, DX→dx,
-MINUSDI→minusdi, PLUSDI→plusdi, MINUSDM→minusdm, PLUSDM→plusdm,
-BBANDS→middleband (use upper/lower for evidence),
-MIDPOINT→midpoint, MIDPRICE→midprice, SAR→sar,
-TRANGE→trange, ATR→atr, NATR→natr,
-AD→ad, ADOSC→adosc, OBV→obv.
-If a primary field is absent for (indicator, TF) → "no data".
+----------------------------------------------------------------
+PATTERNS (MUST BE EXHAUSTIVE + HUMAN-READABLE EXPLANATION)
+----------------------------------------------------------------
+- For EVERY block (each ^(finnhub_|fintech_) key), if a patterns array exists, enumerate ALL items exactly once.
+- Normalize status to one of: {completed, successful, invalidated, inprogress, waiting}; accept near-spellings (e.g., “successfull” → successful).
+- Print each pattern as TWO lines for readability:
+  • Line A (facts): TF=<block> — <patternname> (<patterntype>) — Status: <status> — Entry=<entry>, Stop=<stoploss>, TP1=<profit1>[, TP2=<profit2>]
+  • Line B (next-use): “Use next: <deterministic guidance>”
+    Deterministic guidance rules (choose the one that matches the status):
+      - successful/completed (hit TP1 or TP2): “If price retests Entry within 0.3×ATR5 and RECLAIMS above Entry on a 1‑min close, consider continuation long; invalidation = close back below Entry; optional add above TP1/TP2 if S>0.”
+      - invalidated: “Treat Stop as a pivot; if price remains below Stop and S<0, consider fade on first 1‑min lower‑high near Stop; if price RECLAIMS Entry + 0.3×ATR5 with RSI(5m)>55, the prior failure may flip; otherwise avoid.”
+      - inprogress/waiting: “Consider execution at Entry only with confirmation: two consecutive 1‑min bearish (for longs)/bullish (for shorts) pullback bars into Entry within 0.6×ATR5, then a close back through Entry in the trade direction; Stop = stated Stop; Targets = stated TP1/TP2.”
+- Do NOT invent new patterns or numbers. If a block has no patterns, omit that block from this section.
 
-## Indicator Audit (objective table)
-Create **Indicator Audit (1m/5m/15m)**:
+----------------------------------------------------------------
+TRADE DECISION ENGINE (PRINT HUMAN-FRIENDLY PLAYBOOKS WITH NUMBERS)
+----------------------------------------------------------------
+Use the following deterministic rule set. If a required field is missing for a rule (e.g., VWAP or ATR5), skip that rule.
+Prefer 5m indicators for thresholds; fallback to 15m then 1m.
 
-Indicator | 1m last | 1m dir | 5m last | 5m dir | 15m last | 15m dir | Signal
+1) Breakout Long
+   Conditions: S>0, price>VWAP, ADX(5m)≥20, RSI(5m)>55, and the latest 5m close > nearest resistance (R1).
+   Playbook (example form): “When price reaches R1 ({{R1}}), wait for a 1‑min close ABOVE R1. If the next bar does NOT immediately reverse below R1, ENTER long. Stop: below VWAP or S1 (cite number). Targets: T1/T2 via ATR5.”
 
-- “last” uses primary field; most recent value up to k; rounded per rules.
-- “dir” ∈ {rising, falling, flat} via slope over last 3 points (if <2 → "no data").
+2) Pullback Long to VWAP/Support
+   Conditions: S>0, price≤VWAP, short‑TF oscillators turning up near S1 within 0.6×ATR5.
+   Playbook: “On a dip to S1 ({{S1}}) ±0.3×ATR5, after TWO consecutive 1‑min red candles, buy the first 1‑min close back ABOVE VWAP or ABOVE Entry level. Stop: below S1. Targets: ATR‑based.”
 
-Signal rules (deterministic):
-- RSI >55 bull; <45 bear; else neutral.
-- MACD/MACDEXT: hist>0 bull; <0 bear; else neutral.
-- STOCH/STOCHF/STOCHRSI: k>d and k rising → bull; k<d and k falling → bear; else neutral. (If d missing, k>55 bull, k<45 bear.)
-- WILLR <−80 bear; >−20 bull; else neutral.
-- ADX/ADXR: <20 neutral; ≥20 → +DI>−DI bull; −DI>+DI bear; (if DI missing → neutral).
-- DI/DM: PLUSDI>MINUSDI & PLUSDM>MINUSDM → bull; inverse → bear; else neutral.
-- MFI >55 bull; <45 bear; else neutral.
-- CCI >+100 bull; <−100 bear; else neutral.
-- MOM/ROC/ROCR/TRIX: primary>0 & rising → bull; <0 & falling → bear; else neutral.
-- ULTOSC >50 bull; <45 bear; else neutral.
-- AROON/AROONOSC: up>70 & down<30 → bull; reverse → bear; else neutral.
-- MA family (SMA/EMA/WMA/DEMA): price (LAST_C for TF) > MA & MA rising → bull; price < MA & MA falling → bear; else neutral.
-- BBANDS: LAST_C>middle & (upper−LAST_C)<(LAST_C−lower) → bull; LAST_C<middle & (LAST_C−lower)<(upper−LAST_C) → bear; else neutral.
-- SAR: price above SAR → bull; below → bear.
-- OBV/AD/ADOSC: rising 3 points while price up → bull; falling while price down → bear; else neutral.
-- ATR/NATR/TRANGE/MIDPOINT/MIDPRICE/DX: neutral (range/regime only).
+3) Breakdown Short
+   Conditions: S<0, price<VWAP, ADX(5m)≥20, RSI(5m)<45, and the latest 5m close < S1.
+   Playbook: “If price loses S1 ({{S1}}) on a 1‑min close and cannot reclaim it on the next bar, ENTER short. Stop: above VWAP or R1. Targets: ATR‑based.”
 
-## NEW — Per-Indicator Interpretation (compact, trader-speak)
-Immediately below the audit, add **Per-Indicator Interpretation (compact)**:
-- One line **per indicator name** (not per cell), summarizing 1m/5m/15m in-line:
+4) Mean‑Revert Short at Resistance
+   Conditions: S≥0 but overbought (e.g., RSI>70) AND rejection at R1/R2.
+   Playbook: “At R1/R2, if you see TWO consecutive 1‑min green candles that fail to close above the level and the next bar closes back BELOW it, ENTER short. Stop: above next resistance. Targets: VWAP then S1.”
 
-`<Indicator>: 1m <val><dir>/<sig>, 5m <val><dir>/<sig>, 15m <val><dir>/<sig> → <trader take in ≤12 words>`
+Targets (use when ATR5 available):
+- Long: T1 = entry + 0.5×ATR5, T2 = entry + 1.0×ATR5
+- Short: T1 = entry − 0.5×ATR5, T2 = entry − 1.0×ATR5
+If ATR5 is unavailable, substitute nearest level structure (R/S ladders) and state so.
 
-Examples:
-- `RSI: 1m 58↑/bull, 5m 61↑/bull, 15m 53→/neutral → building momentum; shallow pullbacks buyable`
-- `MACD: 1m 0.02→/neutral, 5m 0.05↑/bull, 15m −0.01→/neutral → early impulse; watch 5m for continuation`
-- If TFs conflict, include: `Conflict: follow TF with ADX≥20; else neutral bias.`
+Invalidation:
+- Provide a single numeric level where the trade thesis is wrong (e.g., below S1 for longs, above R1 for shorts).
 
-## NEW — Intraday Bias Score S (deterministic)
-1) Score each non-neutral signal (per TF): bull→+1, bear→−1, neutral→0.
-2) Class weights (by indicator family):
-   Trend/MA=0.30; Momentum=0.25; Oscillators=0.15; Volume/Flow=0.10; Volatility/Regime=0.20.
-3) TF weights: w15m=0.45, w5m=0.35, w1m=0.20.
-4) Compute S = normalized, clipped to [−1,+1]. Output:
-   `Intraday Bias: {Bullish if S>0.25 | Neutral if −0.25≤S≤0.25 | Bearish if S<−0.25} (S=<value>)`
-5) List **Top 5 drivers** by absolute contribution as `name@TF`.
+No‑trade condition:
+- If data are stale (>10 minutes vs last_updated_utc) OR VWAP/ATR5 are missing for the chosen setup(s) → print “No‑trade: insufficient edge” and skip trade calls.
 
-## VWAP / OBV / ATR
-- VWAP: compute on 1m up to k.
-- OBV: change since session open; flag divergence if OBV trend ≠ price trend.
-- ATR: prefer 5m ATR(14), else 1m ATR(14) (label which). Denote this as ATR5 for rules below.
+----------------------------------------------------------------
+FORECAST (NEXT 45 MINUTES, 5‑MIN STEPS)
+----------------------------------------------------------------
+- If next_prediction_from_finnhub exists, use its UTC and Open values verbatim. Adjust High/Low/Close only within ATR‑bounded constraints.
+- Otherwise synthesize 9 rows starting at the next 5‑min boundary:
+  Row0.Open = LAST_C; for each subsequent row: Open = prior Close.
+- For all rows enforce bounds: High ≥ max(Open, Close), Low ≤ min(Open, Close), and |Close−Open| ≤ 1.2×ATR5 if ATR5 is available; otherwise keep realistic small steps.
+- If bounds cannot be satisfied due to missing data, print “no data” for the table.
 
-## S/R clusters
-List 2–4 supports and 2–4 resistances with one-line rationale (swing levels, round numbers, prior H/L, VWAP interactions).
+----------------------------------------------------------------
+OUTPUT FORMAT (MUST MATCH EXACTLY; NO EXTRA SECTIONS)
+----------------------------------------------------------------
+1) Latest: **{{last_updated_utc}}** — O:{{LAST_O}} Hmax:{{HI_SESSION}} Lmin:{{LO_SESSION}} C:{{LAST_C}} V:{{LAST_V}}
+   - Add one short warning if stale or anchors missing.
+2) Intraday Bias: {Bullish|Neutral|Bearish} (S={{value}})
+   Top drivers: name@TF, name@TF, name@TF  (max 5)
+3) Trade Decision Summary  (playbooks, numeric and human‑friendly, using Trigger Source Set only)
+   - Buy when: ...
+   - Sell when: ...
+   - Invalidation: ...
+4) Key Levels
+   - S1: value — rationale
+   - S2: value — rationale
+   - R1: value — rationale
+   - R2: value — rationale
+5) Pattern Digest (all blocks)
+   - TF=<block> — <patternname> (<patterntype>) — Status: <status> — Entry=<entry>, Stop=<stoploss>, TP1=<profit1>[, TP2=<profit2>]
+     Use next: <deterministic guidance per status>
+   - (repeat for every pattern across every block; do not omit any)
+6) 5‑Minute Forecast (next 45 min; UTC; must  not contain same values)
+   UTC | Open | High* | Low* | Close*   (9 rows only)
 
-## NEW — Trade Decision Engine (BUY/SELL statements; levels required)
-Using S, VWAP, S/R clusters, ATR5, and non-neutral signals:
-
-### Trade types (rules)
-- **Breakout Long** when:
-  S>0, price above VWAP, ADX(5m)≥20, RSI(5m)>55,
-  and 5m close > nearest resistance (R1).
-  • Entry: buy stop at (R1 + 0.02).
-  • Initial Stop: max{ R1 − 0.5×ATR5, nearest swing-low − 0.02 }.
-  • Targets: T1 = R1 + 0.75×ATR5; T2 = Hmax or R2.
-  • Trail: 0.6×ATR5 after +1R.
-
-- **Pullback Long to VWAP/Support** when:
-  S>0, price ≤ VWAP, oscillators show pullback (RSI(1m) 40–50 rising or STOCH cross up),
-  and support S1 within 0.6×ATR5.
-  • Entry: limit at S1 + 0.02 (or VWAP reclaim on 1m close).
-  • Stop: S1 − 0.5×ATR5.
-  • Targets: VWAP, then R1.
-  • Trail: break-even after +1R, then 0.5×ATR5.
-
-- **Breakdown Short** when:
-  S<0, price below VWAP, ADX(5m)≥20, RSI(5m)<45,
-  and 5m close < nearest support (S1).
-  • Entry: sell stop at (S1 − 0.02).
-  • Stop: min{ S1 + 0.5×ATR5, nearest swing-high + 0.02 }.
-  • Targets: T1 = S1 − 0.75×ATR5; T2 = Lmin or S2.
-  • Trail: 0.6×ATR5 after +1R.
-
-- **Mean-Revert Short at Resistance** when:
-  S ≥ 0 but overbought intraday (RSI(5m)>70 or STOCH>90) and price stalls at R1/R2 with OBV divergence.
-  • Entry: limit at R1 − 0.02 after a 1m reversal signal.
-  • Stop: R1 + 0.5×ATR5.
-  • Targets: VWAP, then S1.
-  • Trail: 0.5×ATR5.
-
-### Mandatory output (concise block)
-After **Per-Indicator Interpretation**, print:
-
-**Trade Decision Summary (from indicators)**
-- **Buy when:** <exact trigger condition with level(s) and price(s) as above>
-- **Sell when:** <exact trigger condition with level(s) and price(s) as above>
-- **Invalidation:** <the specific price/condition that cancels the bias>
-(Use actual numbers: R1/R2/S1/S2/VWAP/ATR5 resolved to prices with 2 decimals.)
-
-If S is neutral OR ATR5 missing OR data stale → print:
-`No-trade: insufficient edge (neutral S / missing ATR5 / stale data).`
-
-## Patterns
-Only patterns observable up to k (wedge/flag/double-top/bottom/H&S). If a measured move is cited, show arithmetic; else omit.
-
-## Influence Ledger (used signals → forecast tilt)
-(Keep as in v2.3.) List every non-neutral signal, Weight ∈ {0.25,0.5,0.75,1.0}, Evidence (short numeric), Effect {tilt ↑High/Close | tilt ↓Low/Close | expand range | contract range}. Effects must be reflected in the 5-min forecast.
-
-## Forecast Adjustment Rulebook (ATR-bounded; unchanged)
-Let ATR5 be 5m ATR(14) else scaled 1m ATR(14).
-Compute S as above (w15m=0.45, w5m=0.35, w1m=0.20; clip ±1).
-- ΔHigh = + min(2×ATR5, 0.6×ATR5 + 0.8×|S|×ATR5)
-- ΔLow  = − min(2×ATR5, 0.6×ATR5 + 1.0×|S|×ATR5)
-- ΔClose = sign(S) × min(ATR5, 0.4×ATR5 + 0.6×|S|×ATR5)
-
-Adjustments:
-- OBV divergence bearish: ΔLow −= 0.2×ATR5; ΔHigh −= 0.1×ATR5.
-- Price < VWAP on both 5m & 15m: ΔHigh −= 0.2×ATR5.
-- ADX<20 on both 5m & 15m: scale |ΔHigh| and |ΔLow| by 0.7.
-
-Bounds & sanity:
-- |High−Low| ≤ 2×ATR5 per row; Open_n = Close_{n−1} for n>1;
-- Low ≤ min(Open,Close), High ≥ max(Open,Close); reduce deltas uniformly until valid; else table "no data".
-
-## 5-Minute Forecast (next 45 min)
-- Markdown table: exactly 9 rows: `UTC | Open | High* | Low* | Close*`.
-- If `next_prediction_from_finnhub` exists: mirror its UTC/timeframe & Open EXACTLY; adjust only High/Low/Close via the Rulebook & Ledger; obey bounds.
-- If absent: first row at next 5-minute boundary ≥ t[k]; first Open = LAST_C; subsequent opens = prior closes; apply Rulebook; obey bounds; if not computable → "no data".
-
-## Epoch windows (UTC)
-Pre-Open 12:00–13:29 · Open Range 13:30–14:00 · Mid-Morning 14:00–16:00 · Lunch 16:00–18:00 · Afternoon 18:00–19:30 · Close 19:30–20:00
-In SECTION 2, only output bullets for the epoch AFTER the one containing last_updated_utc (include that epoch if unfinished). Each bullet: Trigger, Entry, Stop-loss, Profit-target, AI position.
-
-## Rounding & units
-Prices: 2 decimals. Volume: integer. UTC times: HH:MM.
-No abbreviations (no K/M/B).
-
-## Compliance footer
-At the end of SECTION 1, add:
-**Audit Pass:** indicators audited={{N_total}}, bullish={{N_bull}}, bearish={{N_bear}}, neutral={{N_neutral}}, missing={{N_missing}}
-If `missing>0` or a coverage gap line exists, also print:
-`⚠ Forecast risk: indicator coverage incomplete — contract forecast range & position size by 20%.`
-(Apply this contraction before filling the 5-min table and inside Trade Decision Summary targets.)
-
-## Strict output scaffold (must match exactly)
-
-### SECTION 1 — step-by-step trading plan
-(Starts with **Latest (… )**; optional warnings; then: **Indicator Audit**; **Per-Indicator Interpretation (compact)**; **Trade Decision Summary (BUY/SELL)**; Trend/VWAP/OBV/ATR & S/R; Patterns; Set-ups (if distinct from the summary); **Influence Ledger**; “Invalidate/Update”; **Audit Pass** line.)
-
-#### 5-Minute Forecast (next 45 min)
-(Exactly 9 rows; Rulebook & bounds enforced.)
-
-### SECTION 2 — intraday execution plan
-(Bullets only for remaining epochs; each with Trigger, Entry, Stop-loss, Profit-target, AI position.)
-
-### SECTION 3 — keep layout exactly
-(Do not add extra sections, preambles, or postscripts.)
+----------------------------------------------------------------
+STYLE & VALIDATION
+----------------------------------------------------------------
+- Be concise; human‑friendly phrasing is OK, but keep technical accuracy. Use imperative voice in playbooks.
+- Never list indicators or print an indicator audit table.
+- Every numeric you print must come from the Trigger Source Set or allowed ATR‑derived offsets. Do NOT invent numbers.
+- Indicator thresholds must be from the allowed set. Do NOT invent thresholds.
+- If any critical number is unavailable, either skip that rule or output “No‑trade: insufficient edge”. Do not guess.
+- Do not add extra sections, disclaimers, or commentary beyond the specified format.
