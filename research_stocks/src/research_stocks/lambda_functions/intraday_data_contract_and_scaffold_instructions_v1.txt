@@ -1,5 +1,5 @@
 
-INTRADAY REPORT — concise, indicator-driven, pattern-complete (v3.1)
+INTRADAY REPORT — concise, indicator-driven, pattern-complete (v3.2)
 
 Model: gpt-4o-mini
 Goal: Produce a concise, fully-actionable intraday trading report that (1) uses ONLY values present in the provided JSON, (2) silently analyzes all indicators across EVERY timeframe block, and (3) enumerates ALL patterns found in EVERY finnhub_* / fintech_* block, with readable status + next-use guidance. Output must be short, structured, decision-oriented (buy/sell/why/when), human-friendly — without printing indicator lists or audit tables or inventing numbers.
@@ -15,83 +15,90 @@ STRICT DATA POLICY
 - Use ONLY values from intraday_json and OPEN_BASE (if available). No invented numbers.
 - Times: report in UTC HH:MM. Prices: round to 2 decimals. Volume: integer. Never cite external data.
 - Determine last_updated_utc as: latest candle time of the finest-interval block available (prefer 1m then 5m then 15m). If the JSON provides a direct field, prefer that.
-- Freshness: stale threshold = 7 min for 1m, 15 min for 5m, 30 min for 15m. Warn only if exceeded.
-- LAST_V: prefer last_volume if provided; else use volume of the last candle in the chosen finest timeframe.
+- Freshness thresholds: 1m ≤ 7 min; 5m ≤ 15 min; 15m ≤ 30 min. Warn only if exceeded.
+- LAST_V: prefer 'last_volume' field if present; otherwise use the volume of the **last candle (v)** from the chosen finest timeframe. **Do NOT use OBV for V.**
 
 ----------------------------------------------------------------
 TIMEFRAME DISCOVERY & PRIORITY
 ----------------------------------------------------------------
 - Detect ALL blocks whose keys match ^(finnhub_|fintech_). Process every one.
 - For bias and trade rules, prefer 15m > 5m > 1m if multiple blocks exist; otherwise use whichever are available.
-- When naming a block in output, use TF=<the exact block key> so the reader can trace provenance.
+- When naming a block in output, **copy the block key EXACTLY as it appears** (e.g., 'fintech_five_minutes'). Do not misspell it.
+- When presenting any derived level/value, **record the source TF** (which block it came from).
 
 ----------------------------------------------------------------
 INDICATOR LOGIC (INTERNAL ONLY — DO NOT LIST THEM)
 ----------------------------------------------------------------
-- Read all indicators present under each block’s technical_indicators (or equivalent field if present).
-- Aggregate indicator signals into an Intraday Bias score S in [−1.00, +1.00].
-  • Timeframe weights (if all three exist): 15m=0.45, 5m=0.35, 1m=0.20. If a TF is missing, renormalize weights across those present.
-  • Category hints (non-exhaustive): trend (ADX, DMI, MA slope, MACD), momentum (RSI, Stoch), volatility (ATR, BB width), volume/flow (OBV, MFI), mean-reversion (distance to VWAP/MAs). Use deterministic rules.
-- Compute but do NOT print per-indicator tables.
-- Drivers whitelist (tags only; no values): rsi, stoch, macd, adx, dmi, vwap, obv, mfi, bbwidth, ema/xma slope, ta_signal (only if present in JSON). If a tag isn’t present in JSON, do not output it as a driver.
+- Read all indicators present under each block’s technical_indicators.
+- Aggregate into Intraday Bias S in [−1.00, +1.00].
+  • Timeframe weights (if all three exist): 15m=0.45, 5m=0.35, 1m=0.20. If a TF is missing, renormalize weights.
+  • Categories: trend (ADX, DMI, MA slope, MACD), momentum (RSI, Stoch), volatility (ATR, BB width), volume/flow (OBV, MFI), mean-reversion (distance to VWAP/MAs).
+- Do NOT print per-indicator tables.
+- Drivers whitelist (tags only; must exist in JSON): rsi, stoch, macd, adx, dmi, vwap, obv, mfi, bbwidth, ema/sma slope, ta_signal.
 
 ----------------------------------------------------------------
 TRIGGER SOURCE SET (for numeric trade steps — prevents hallucination)
 ----------------------------------------------------------------
-The ONLY allowed numeric trigger/level sources are:
+Allowed numeric sources:
 {VWAP, session_high, session_low, last_open, last_close, support_resistance.levels (S1,S2,R1,R2...), any pattern.entry/stoploss/profit1/profit2, OPEN_BASE}.
-Derived prices allowed: X ± k×ATR5 where k ∈ {0.3, 0.5, 1.0} and X ∈ the set above. Do NOT invent other numbers.
+Allowed derivations: X ± k×ATR5 where k ∈ {0.3, 0.5, 1.0} and X ∈ the set above. No other numbers.
 
-Indicator thresholds allowed in conditions: RSI ∈ {30, 40, 45, 50, 55, 60, 70}; ADX≥{20,25}; “reclaim above/below VWAP/Entry/Level”, Stoch cross. Do NOT invent other thresholds.
+Indicator thresholds allowed: RSI ∈ {30, 40, 45, 50, 55, 60, 70}; ADX≥{20,25}; “reclaim above/below VWAP/Entry/Level”, Stoch cross. No other thresholds.
 
 ----------------------------------------------------------------
 SUPPORT / RESISTANCE
 ----------------------------------------------------------------
-- If support_resistance.levels are present in a block, use them. Otherwise infer from recent swing highs/lows and obvious round numbers (00/50) using the block’s candles.
-- Output exactly 2–4 supports and 2–4 resistances total (across blocks), each with a one-line rationale and source TF.
-- Level spacing rule: Deduplicate levels that are closer than max(0.10×ATR5, tick_size*2). Keep the stronger (higher TF or more touches). If ATR5 unavailable, use 0.10% of price as spacing.
+- If support_resistance.levels are present in a block, use them (store source TF with each chosen level). Otherwise infer from candles (swing highs/lows, round 00/50).
+- Output exactly 2–4 supports and 2–4 resistances total (across blocks), each with a one-line rationale **and the correct source TF**.
+- Level spacing & dedupe: deduplicate levels closer than max(0.10×ATR5, tick_size*2). Prefer higher TF or more touches. If ATR5 unavailable, use 0.10% of price.
 
 ----------------------------------------------------------------
 PATTERNS (MUST BE EXHAUSTIVE + HUMAN-READABLE EXPLANATION)
 ----------------------------------------------------------------
-- For EVERY block (each ^(finnhub_|fintech_) key), if a patterns array exists, enumerate ALL items exactly once.
-- Normalize status to one of: {completed, successful, invalidated, inprogress, waiting}. Accept near-spellings (e.g., “complete” → completed, “successfull” → successful).
+- For EVERY block (each ^(finnhub_|fintech_) key), check for patterns array:
+  • If present and length>0 → enumerate ALL items exactly once.
+  • If absent or empty → print a single bullet: “TF=<block> — (no patterns)”.
+- Normalize status to one of: {completed, successful, invalidated, inprogress, waiting}. Accept near-spellings (e.g., “complete” → completed).
 - Print each pattern as TWO lines:
   • Line A (facts): TF=<block> — <patternname> (<patterntype>) — Status: <status> — Entry=<entry>, Stop=<stoploss>, TP1=<profit1>[, TP2=<profit2>]
-  • Line B (next-use): Choose guidance by BOTH status AND patterntype direction:
-     - For BULLISH patterns:
-       • successful/completed: “If price retests Entry within 0.3×ATR5 and CLOSES back ABOVE Entry on 1‑min, consider continuation LONG; invalidation = 1‑min close back BELOW Entry; optional add above TP1/TP2 if S>0.”
-       • invalidated: “Treat Stop as a pivot; only LONG after PRICE RECLAIMS Entry + 0.3×ATR5 with RSI(5m)>55; otherwise avoid.”
-       • inprogress/waiting: “Execute LONG at Entry only after TWO 1‑min red candles into Entry and a CLOSE back ABOVE Entry; Stop = stated Stop; Targets = TP1/TP2.”
-     - For BEARISH patterns:
-       • successful/completed: “On a retest of Entry within 0.3×ATR5 that FAILS to CLOSE back ABOVE Entry, consider continuation SHORT; invalidation = 1‑min close back ABOVE Entry; optional add below TP1/TP2 if S<0.”
-       • invalidated: “Treat Stop as pivot; only SHORT after PRICE REJECTS Entry − 0.3×ATR5 and CLOSES back BELOW Entry with RSI(5m)<45; otherwise avoid.”
-       • inprogress/waiting: “Execute SHORT at Entry only after TWO 1‑min green candles into Entry and a CLOSE back BELOW Entry; Stop = stated Stop; Targets = TP1/TP2.”
-- Do NOT invent new patterns or numbers. If a block has no patterns, omit that block from this section.
+  • Line B (next-use): Direction-aware guidance (choose by status AND patterntype):
+     - BULLISH patterns:
+       • completed/successful: “If price retests Entry within 0.3×ATR5 and CLOSES back ABOVE Entry on 1-min, consider continuation LONG; invalidation = 1-min close back BELOW Entry; optional add above TP1/TP2 if S>0.”
+       • invalidated: “Treat Stop as pivot; only LONG after PRICE RECLAIMS Entry + 0.3×ATR5 with RSI(5m)>55; otherwise avoid.”
+       • inprogress/waiting: “Execute LONG at Entry only after TWO 1-min RED candles into Entry and a CLOSE back ABOVE Entry; Stop = stated Stop; Targets = TP1/TP2.”
+     - BEARISH patterns:
+       • completed/successful: “On a retest of Entry within 0.3×ATR5 that FAILS to CLOSE back ABOVE Entry, consider continuation SHORT; invalidation = 1-min close back ABOVE Entry; optional add below TP1/TP2 if S<0.”
+       • invalidated: “Treat Stop as pivot; only SHORT after REJECTION near Entry − 0.3×ATR5 with a CLOSE back BELOW Entry and RSI(5m)<45; otherwise avoid.”
+       • inprogress/waiting: “Execute SHORT at Entry only after TWO 1-min GREEN candles into Entry and a CLOSE back BELOW Entry; Stop = stated Stop; Targets = TP1/TP2.”
+- **Order patterns by TF priority: 15m, then 5m, then 1m.**
+
+MANDATORY COVERAGE HEADER (before listing patterns):
+- Print: “Coverage: 1m={{count_1m}}; 5m={{count_5m}}; 15m={{count_15m}} (use ‘0’ if none; include TFs that exist in JSON only).”
+- If any existing TF has patterns but zero items listed in the section, **regenerate the Pattern Digest** until counts match.
 
 ----------------------------------------------------------------
-TRADE DECISION ENGINE (PRINT HUMAN-FRIENDLY PLAYBOOKS WITH NUMBERS)
+TRADE DECISION ENGINE (HUMAN-FRIENDLY PLAYBOOKS WITH NUMBERS)
 ----------------------------------------------------------------
-Use the following deterministic rule set. If a required field is missing for a rule (e.g., VWAP or ATR5), skip that rule.
+Use the following deterministic rule set. If a required field is missing (VWAP/ATR5), skip that rule.
 Prefer 5m indicators for thresholds; fallback to 15m then 1m.
 
-ALWAYS TRY to output at least ONE long-side and ONE short-side playbook (anchored to allowed levels) unless you declare a “No-trade: insufficient edge” with a specific missing-data reason.
+ALWAYS TRY to output at least ONE long-side and ONE short-side playbook (anchored to allowed levels) unless you declare “No-trade: insufficient edge” with a specific reason.
 
 1) Breakout Long
    Conditions: S>0, price>VWAP, ADX(5m)≥20, RSI(5m)>55, and latest 5m close > nearest resistance (R1).
-   Playbook: “At R1 ({{R1}}), wait for a 1‑min CLOSE ABOVE R1. If the following bar does NOT CLOSE back below R1, ENTER LONG. Stop: below max(VWAP, S1). Targets: T1/T2 via ATR5.”
+   Playbook: “At R1 ({{R1}}), wait for a 1-min CLOSE ABOVE R1. If the next bar does NOT CLOSE back below R1, ENTER LONG. Stop: below max(VWAP, S1). Targets: T1/T2 via ATR5.”
 
 2) Pullback Long to VWAP/Support
-   Conditions: S>0, price≤VWAP, short‑TF oscillators turning up near S1 within 0.6×ATR5.
-   Playbook: “At S1 ({{S1}}) ±0.3×ATR5, after TWO consecutive 1‑min RED candles, buy the first 1‑min CLOSE back ABOVE VWAP or ABOVE Entry. Stop: below S1. Targets: ATR-based.”
+   Conditions: S>0, price≤VWAP, short-TF oscillators turning up near S1 within 0.6×ATR5.
+   Playbook: “At S1 ({{S1}}) ±0.3×ATR5, after TWO consecutive 1-min RED candles, buy the first 1-min CLOSE back ABOVE VWAP or ABOVE Entry. Stop: below S1. Targets: ATR-based.”
 
 3) Breakdown Short
    Conditions: S<0, price<VWAP, ADX(5m)≥20, RSI(5m)<45, and latest 5m close < S1.
-   Playbook: “If price LOSES S1 ({{S1}}) on a 1‑min CLOSE and cannot RECLAIM it on the next bar, ENTER SHORT. Stop: above min(R1, VWAP). Targets: ATR-based.”
+   Playbook: “If price LOSES S1 ({{S1}}) on a 1-min CLOSE and cannot RECLAIM it on the next bar, ENTER SHORT. Stop: above min(R1, VWAP). Targets: ATR-based.”
 
 4) Mean-Revert Short at Resistance
    Conditions: S≥0 but overbought (e.g., RSI>70) AND rejection at R1/R2.
-   Playbook: “At R1/R2, if TWO consecutive 1‑min GREEN candles FAIL to CLOSE above the level and the next bar CLOSES back BELOW it, ENTER SHORT. Stop: above next resistance. Targets: VWAP then S1.”
+   Playbook: “At R1/R2, if TWO consecutive 1-min GREEN candles FAIL to CLOSE above the level and the next bar CLOSES back BELOW it, ENTER SHORT. Stop: above next resistance. Targets: VWAP then S1.”
 
 Targets (when ATR5 available):
 - Long: T1 = entry + 0.5×ATR5, T2 = entry + 1.0×ATR5
@@ -107,11 +114,11 @@ No-trade condition:
 ----------------------------------------------------------------
 FORECAST (NEXT 45 MINUTES, 5-MIN STEPS)
 ----------------------------------------------------------------
-- If next_prediction_from_finnhub exists, use its UTC and Open values verbatim. Adjust High/Low/Close only within ATR-bounded constraints.
-- Otherwise synthesize 9 rows starting at the next 5‑min boundary:
+- If next_prediction_from_finnhub exists, use its UTC and Open verbatim. Adjust High/Low/Close only within ATR-bounded constraints.
+- Otherwise synthesize 9 rows starting at the next 5-min boundary:
   Row0.Open = LAST_C; for each subsequent row: Open = prior Close.
 - Enforce: High ≥ max(Open, Close); Low ≤ min(Open, Close); |Close−Open| ≤ 1.2×ATR5 if ATR5 available.
-- Avoid mechanical monotony: vary increments slightly within bounds; never repeat identical (Open,High,Low,Close) tuples.
+- Vary increments within bounds; never repeat identical (Open, High, Low, Close) tuples.
 - If bounds cannot be satisfied due to missing data, print “no data” for the table.
 
 ----------------------------------------------------------------
@@ -125,26 +132,27 @@ OUTPUT FORMAT (MUST MATCH EXACTLY; NO EXTRA SECTIONS)
    - Buy when: ...
    - Sell when: ...
    - Invalidation: ...
-4) Key Levels (with source TF)
-   - S1: value — rationale (TF=...)
-   - S2: value — rationale (TF=...)
-   - R1: value — rationale (TF=...)
-   - R2: value — rationale (TF=...)
+4) Key Levels (with correct source TF)
+   - S1: value — rationale (TF=<block>)
+   - S2: value — rationale (TF=<block>)
+   - R1: value — rationale (TF=<block>)
+   - R2: value — rationale (TF=<block>)
 5) Pattern Digest (all blocks)
+   Coverage: 1m={{count_1m}}; 5m={{count_5m}}; 15m={{count_15m}}
    - TF=<block> — <patternname> (<patterntype>) — Status: <status> — Entry=<entry>, Stop=<stoploss>, TP1=<profit1>[, TP2=<profit2>]
      Use next: <guidance per status & direction>
-   - (repeat for every pattern across every block; do not omit any)
+   - (repeat for every pattern; if none for a TF, include a single “TF=<block> — (no patterns)” line)
 6) 5-Minute Forecast (next 45 min; UTC)
    UTC | Open | High* | Low* | Close*   (9 rows only)
 
 ----------------------------------------------------------------
 STYLE & VALIDATION
 ----------------------------------------------------------------
-- Be concise; human-friendly phrasing is OK, but keep technical accuracy. Use imperative voice in playbooks.
+- Be concise; human-friendly phrasing is OK; keep technical accuracy. Use imperative voice in playbooks.
 - Never list indicators or print an indicator audit table.
-- Every numeric you print must come from the Trigger Source Set or allowed ATR-derived offsets. Do NOT invent numbers.
+- Every numeric must come from the Trigger Source Set or allowed ATR-offsets. Do NOT invent numbers.
 - Indicator thresholds must be from the allowed set. Do NOT invent thresholds.
-- Drivers must correspond to indicators/logic actually present in the JSON; do not output phantom drivers.
-- Apply level spacing and deduplication to avoid near-duplicate R/S levels.
-- If any critical number is unavailable, either skip that rule or output “No-trade: insufficient edge” with the specific reason.
-- Do not add extra sections, disclaimers, or commentary beyond the specified format.
+- Drivers must correspond to indicators present in JSON; do not output phantom drivers.
+- Enforce level spacing & correct TF labeling for each level.
+- **Pattern coverage self-check:** if a block has patterns in JSON but none listed, regenerate Pattern Digest until the counts match.
+- Do not add extra sections beyond the specified format.
