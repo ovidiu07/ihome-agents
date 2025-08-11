@@ -44,6 +44,95 @@ def generate_presigned_url(bucket: str, key: str, expiration: int = 300) -> str:
     raise
 
 
+def load_grok_parse_json_instructions(
+) -> List[Dict[str, str]]:
+  """Build a messages array (system, developer, user) for GROK parse‑JSON.
+
+  System and developer instructions are loaded from S3 (if available). The user
+  message is composed from the provided `results` JSON and `filename`.
+  Returns a list of chat messages suitable for OpenAI/xAI chat APIs.
+  """
+  # ── Load SYSTEM instructions ───────────────────────────────────────────────
+  try:
+    sys_key = "gpt/grok_parse_json_sys_instructions.txt"
+    obj = s3_client.get_object(Bucket="devtailor-transactions", Key=sys_key)
+    system_text = obj["Body"].read().decode("utf-8")
+  except ClientError as e:
+    logger.error("Could not fetch GROK SYSTEM instructions from S3: %s", e)
+    system_text = (
+      "You are a rigorous intraday market analyst. Output ONE JSON object only, "
+      "following the provided schema. Do not include prose or code fences."
+    )
+
+  # ── Load DEVELOPER contract/schema (fallback included) ─────────────────────
+  try:
+    dev_key = "gpt/grok_parse_json_contract_instructions.txt"
+    obj2 = s3_client.get_object(Bucket="devtailor-transactions", Key=dev_key)
+    developer_text = obj2["Body"].read().decode("utf-8")
+  except ClientError as e:
+    logger.error("Could not fetch GROK DEVELOPER contract from S3: %s", e)
+    developer_text = (
+      "Output rules (critical):\n"
+      "- Valid JSON only (single object). No prose, no markdown.\n"
+      "- Use only numbers present in the input JSON. If missing, use empty arrays.\n"
+      "- bias ∈ {\"bullish\", \"bearish\", \"neutral\"}.\n"
+      "- direction ∈ {\"rising\", \"falling\", \"flat\"}.\n"
+      "- Derive timeframe from resolution: 1→1m, 5→5m, 15→15m, 60→60m, D→1D, W→1W.\n\n"
+      "Final JSON schema (field order):\n"
+      "{\n"
+      "  \"timeframe\": \"<derived>\",\n"
+      "  \"symbol\": \"<symbol>\",\n"
+      "  \"summary\": \"one-paragraph objective take\",\n"
+      "  \"bias\": \"bullish|bearish|neutral\",\n"
+      "  \"signals\": [ { \"name\": \"RSI\", \"value\": 47.2, \"direction\": \"rising|falling|flat\" } ],\n"
+      "  \"levels\": {\n"
+      "    \"support\": [ { \"price\": 0.0, \"why\": \"string\" } ],\n"
+      "    \"resistance\": [ { \"price\": 0.0, \"why\": \"string\" } ]\n"
+      "  },\n"
+      "  \"setups\": [ { \n"
+      "    \"type\": \"breakout|reversal|pullback\",\n"
+      "    \"entry\": 0.0,\n"
+      "    \"stop\": 0.0,\n"
+      "    \"targets\": [0.0],\n"
+      "    \"invalidated_if\": \"condition\"\n"
+      "  } ],\n"
+      "  \"patterns_explained\": [ {\n"
+      "    \"name\": \"<pattern>\",\n"
+      "    \"type\": \"bullish|bearish\",\n"
+      "    \"status\": \"<status>\",\n"
+      "    \"entry\": 0.0,\n"
+      "    \"stop\": 0.0,\n"
+      "    \"targets\": [0.0],\n"
+      "    \"comment\": \"One sentence grounded in input fields.\"\n"
+      "  } ]\n"
+      "}\n"
+    )
+
+  # ── Build USER (runtime) message ───────────────────────────────────────────
+  user_parts: List[str] = [
+    "TASK: Return ONE JSON object exactly per the schema. Use only values present in the input. No prose."]
+  user_text = "\n\n".join(user_parts)
+
+  messages: List[Dict[str, str]] = [
+    {"role": "system", "content": system_text},
+    {"role": "developer", "content": developer_text},
+    {"role": "user", "content": user_text},
+  ]
+  return messages
+
+# Backward-compat wrapper (legacy callers may still expect a simple system string)
+def load_grok_system_instructions_only() -> str:
+  try:
+    key = "gpt/grok_parse_json_instructions.txt"
+    obj = s3_client.get_object(Bucket="devtailor-transactions", Key=key)
+    return obj["Body"].read().decode("utf-8")
+  except ClientError as e:
+    logger.error("Could not fetch instructions from S3: %s", e)
+    return (
+      "You are a rigorous intraday market analyst. Output ONE JSON object only, "
+      "following the provided schema. Do not include prose or code fences."
+    )
+
 def load_system_persona_tiny(is_general_analysis: bool = True) -> str:
   """Load system instructions for the GPT call from S3."""
   try:

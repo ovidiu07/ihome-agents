@@ -700,9 +700,7 @@ class StockAnalysisCrew:
     print(f"✅ Merged {len(news)} headlines into {results_path}")
 
   @crew
-  def build_market_brief(
-      self,
-      is_general_analysis: bool = True,
+  def build_market_brief(self, is_general_analysis: bool = True,
       previous_report: str | None = None,
   ) -> None:
     """
@@ -749,6 +747,7 @@ class StockAnalysisCrew:
       # Always fetch intraday data
       fintech_one_minute = fetch_all(symbol, resolution="1", lookback_days=1,
                                      save_path="output")
+
       fintech_five_minutes = fetch_all(symbol, resolution="5", lookback_days=1,
                                        save_path="output")
       fintech_fifteen_minutes = fetch_all(symbol, resolution="15",
@@ -786,41 +785,41 @@ class StockAnalysisCrew:
     # Load fetched intraday fintech data
     if fintech_one_minute:
       fintech_data_one_minute = json.loads(
-        fintech_one_minute.read_text(encoding="utf-8"))
+          fintech_one_minute.read_text(encoding="utf-8"))
+      # Here for each timeframe I should provide the prompt to Grok. And instead to store fintech_data_one_minute into results["fintech_one_minute"], to store the output from Grok.
       results["fintech_one_minute"] = fintech_data_one_minute
-
     if fintech_five_minutes:
       fintech_data_five_minutes = json.loads(
-        fintech_five_minutes.read_text(encoding="utf-8"))
+          fintech_five_minutes.read_text(encoding="utf-8"))
       results["fintech_five_minutes"] = fintech_data_five_minutes
 
     if fintech_fifteen_minutes:
       fintech_data_fifteen_minutes = json.loads(
-        fintech_fifteen_minutes.read_text(encoding="utf-8"))
+          fintech_fifteen_minutes.read_text(encoding="utf-8"))
       results["fintech_fifteen_minutes"] = fintech_data_fifteen_minutes
 
     if fintech_hourly:
       fintech_data_hourly = json.loads(
-        fintech_hourly.read_text(encoding="utf-8"))
+          fintech_hourly.read_text(encoding="utf-8"))
       results["fintech_hourly"] = fintech_data_hourly
 
     # Load daily and weekly data only for general analysis
     if is_general_analysis:
       if fintech_daily:
         fintech_data_daily = json.loads(
-          fintech_daily.read_text(encoding="utf-8"))
+            fintech_daily.read_text(encoding="utf-8"))
         results["fintech_daily"] = fintech_data_daily
 
       if fintech_weekly:
         fintech_data_weekly = json.loads(
-          fintech_weekly.read_text(encoding="utf-8"))
+            fintech_weekly.read_text(encoding="utf-8"))
         results["fintech_weekly"] = fintech_data_weekly
 
     # Compute immediate forecast from raw Finnhub payload
     try:
       print(f"Writing next prediction for symbol: {symbol}...")
       results["next_prediction_from_finnhub"] = next_prediction_from_finnhub(
-        results)
+          results)
     except Exception as exc:
       logging.warning("Failed to build next_prediction: %s", exc)
 
@@ -845,12 +844,8 @@ class StockAnalysisCrew:
       # results["company_news"] = [item.dict() for item in news_items]
       results_path.parent.mkdir(parents=True, exist_ok=True)
       results_path.write_text(json.dumps(results, indent=2), encoding="utf-8")
-      result = call_gpt_action_with_json_content(
-          results,
-          symbol,
-          is_general_analysis,
-          previous_report,
-      )
+      result = call_gpt_action_with_json_content(results, symbol,
+          is_general_analysis, previous_report, )
       analysis_text = result
       if analysis_text is None:
         logger.error("GPT Action response missing 'analysis' field: %s", result)

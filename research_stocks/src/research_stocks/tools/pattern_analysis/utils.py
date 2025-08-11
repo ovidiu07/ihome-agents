@@ -5,6 +5,11 @@ from __future__ import annotations
 
 import pandas as pd
 from typing import List, Dict
+import os
+import re
+import requests
+from textwrap import dedent
+from research_stocks.src.research_stocks.lambda_functions.s3_gpt_analysis import load_grok_parse_json_instructions
 
 
 def get_pattern_reliability(name: str | None = None):
@@ -87,3 +92,77 @@ def slope(series: pd.Series) -> float:
         return 0
     
     return (n * xy_sum - x_sum * y_sum) / denominator
+
+
+# ─────────────────────────────────────────────────────────────
+# Grok integration helpers
+# ─────────────────────────────────────────────────────────────
+
+def _extract_json_from_text(text: str) -> dict:
+    """Best-effort extraction of a single JSON object from an LLM response."""
+    try:
+        return json.loads(text)  # full JSON response
+    except Exception:
+        pass
+
+    # ```json ... ```
+    fence = re.search(r"```json\s*(\{[\s\S]*?\})\s*```", text, re.IGNORECASE)
+    if fence:
+        try:
+            return json.loads(fence.group(1))
+        except Exception:
+            pass
+
+    # first JSON object
+    brace = re.search(r"(\{[\s\S]*\})", text)
+    if brace:
+        try:
+            return json.loads(brace.group(1))
+        except Exception:
+            pass
+
+    raise ValueError("Could not parse JSON from LLM response")
+
+
+def run_grok_on_fintech_block(
+    block: dict,
+    *,
+    symbol: str,
+    timeframe: str,
+    model: str | None = None,
+    endpoint: str | None = None,
+    temperature: float = 0,
+    max_tokens: int = 1400,
+) -> dict:
+
+    if not isinstance(block, dict):
+        raise TypeError("block must be a dict of fintech data")
+
+    model = model or os.getenv("GROK_MODEL", "grok-3-mini")
+    endpoint = endpoint or os.getenv("GROK_ENDPOINT", "https://api.x.ai/v1/chat/completions")
+
+
+    payload = {
+        "model": model,
+        "messages": load_grok_parse_json_instructions(),
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
+
+    try:
+        resp = requests.post(endpoint, json=payload, timeout=90)
+        resp.raise_for_status()
+        data = resp.json()
+        text = data["choices"][0]["message"]["content"]
+        return _extract_json_from_text(text)
+    except Exception as e:
+        logging.warning("Llama call failed for %s %s: %s", symbol, timeframe, e)
+        # Fail soft so your pipeline continues
+        return {
+            "timeframe": timeframe,
+            "summary": "llama_error",
+            "bias": "neutral",
+            "signals": [],
+            "levels": {"support": [], "resistance": []},
+            "setups": [],
+        }

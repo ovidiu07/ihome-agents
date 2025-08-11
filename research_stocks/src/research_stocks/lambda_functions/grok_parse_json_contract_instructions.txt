@@ -1,0 +1,70 @@
+Output rules (critical)
+- Valid JSON only (single object). No prose, no markdown, no code fences.
+- Use only numbers present in the input JSON. If missing, use empty arrays.
+- "bias" must be one of: "bullish", "bearish", "neutral".
+- "direction" must be one of: "rising", "falling", "flat".
+- Derive timeframe from resolution exactly as: 1→"1m", 5→"5m", 15→"15m", 60→"60m", D→"1D", W→"1W". If unknown, use "".
+- Prefer support_resistance.levels; also allowed: session_low/session_high and recent candle OHLC from the input.
+- For signals, use indicators present in the block (e.g., RSI, MACD, STOCH, ADX, EMA/SMA/WMA). Use the most recent value. Determine direction by comparing recent values (e.g., last vs first of the last 3–5 samples).
+- For setups, include at most 3 items; each must be grounded in input levels/values. If you cannot ground them, return an empty array.
+- Include patterns_explained only if patterns exist; use numeric fields from the pattern (entry, stoploss, profit1, profit2). Omit targets that are 0 or missing.
+
+Final JSON schema (field order must match)
+{
+  "timeframe": "<derived timeframe>",
+  "symbol": "<symbol>",
+  "summary": "one-paragraph objective take",
+  "bias": "bullish|bearish|neutral",
+  "signals": [
+    { "name": "RSI", "value": 47.2, "direction": "rising|falling|flat" }
+  ],
+  "levels": {
+    "support": [ { "price": 0.0, "why": "string" } ],
+    "resistance": [ { "price": 0.0, "why": "string" } ]
+  },
+  "setups": [
+    {
+      "type": "breakout|reversal|pullback",
+      "entry": 0.0,
+      "stop": 0.0,
+      "targets": [0.0],
+      "invalidated_if": "condition"
+    }
+  ],
+  "patterns_explained": [
+    {
+      "name": "<patternname>",
+      "type": "bullish|bearish",
+      "status": "<status from input>",
+      "entry": 0.0,
+      "stop": 0.0,
+      "targets": [0.0],
+      "comment": "One sentence grounded in input fields."
+    }
+  ]
+}
+
+Signals guidance
+- Example mapping (use only if present): RSI.value, MACD.macd/macd_signal, STOCH.k/d, ADX.adx, EMA/SMA/WMA last values.
+- direction classification:
+  - rising: last − first > small threshold over last 3–5 points
+  - falling: last − first < −threshold
+  - flat: otherwise
+
+Levels guidance
+- support: levels strictly below last_close (or last candle close); include session_low if present.
+- resistance: levels strictly above last_close; include session_high if present.
+- You may also use recent candle OHLC values from the input as levels if they are explicitly present.
+
+Setups guidance
+- "type": one of "breakout", "reversal", "pullback".
+- "entry", "stop", "targets": must be prices from input levels or pattern targets.
+- "invalidated_if": short text grounded in the input (e.g., "below session_low", "close back under resistance").
+
+Patterns guidance
+- For each pattern in input.patterns:
+  - name: patternname
+  - type: inferred from pattern polarity if available (bullish/bearish), else omit or leave "bullish"/"bearish" consistent with pattern semantics only if explicitly indicated.
+  - status: copy from input
+  - entry/stop/targets: use entry, stoploss, profit1, profit2 if > 0; omit zero values.
+  - comment: one sentence referencing why it matters now (e.g., proximity to current price or confirmation status).
