@@ -3,13 +3,25 @@
 # Utility functions for pattern analysis
 from __future__ import annotations
 
-import pandas as pd
-from typing import List, Dict
+import json
+import logging
 import os
 import re
-import requests
 from textwrap import dedent
-from research_stocks.src.research_stocks.lambda_functions.s3_gpt_analysis import load_grok_parse_json_instructions
+from typing import List, Dict
+
+import pandas as pd
+import requests
+
+try:  # Import may fail if optional dependencies or env vars are missing
+    from research_stocks.lambda_functions.s3_gpt_analysis import (
+        load_grok_parse_json_instructions,
+    )
+except Exception:  # pragma: no cover - fall back to empty instructions
+    def load_grok_parse_json_instructions() -> List[Dict[str, str]]:
+        """Fallback loader returning empty instructions when unavailable."""
+        logging.warning("Using empty GROK instructions fallback")
+        return []
 
 
 def get_pattern_reliability(name: str | None = None):

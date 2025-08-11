@@ -15,6 +15,7 @@ from lambda_functions.s3_gpt_analysis import call_gpt_action_with_json_content
 from lambda_functions.s3_gpt_analysis import save_analysis
 from tools.pattern_analysis.fintech import fetch_all
 from tools.pattern_analysis.forecasting import next_prediction_from_finnhub
+from tools.pattern_analysis.utils import run_grok_on_fintech_block
 
 # FOR DOCKER
 # from research_stocks.tools.pattern_analysis.fintech import fetch_all
@@ -782,38 +783,44 @@ class StockAnalysisCrew:
       results = {}
 
     print(f"Starting to fetch information for symbol: {symbol}...")
-    # Load fetched intraday fintech data
+    # Load fetched intraday fintech data and analyse with GROK
     if fintech_one_minute:
       fintech_data_one_minute = json.loads(
           fintech_one_minute.read_text(encoding="utf-8"))
-      # Here for each timeframe I should provide the prompt to Grok. And instead to store fintech_data_one_minute into results["fintech_one_minute"], to store the output from Grok.
-      results["fintech_one_minute"] = fintech_data_one_minute
+      results["fintech_one_minute"] = run_grok_on_fintech_block(
+          block=fintech_data_one_minute, symbol=symbol, timeframe="1m")
+
     if fintech_five_minutes:
       fintech_data_five_minutes = json.loads(
           fintech_five_minutes.read_text(encoding="utf-8"))
-      results["fintech_five_minutes"] = fintech_data_five_minutes
+      results["fintech_five_minutes"] = run_grok_on_fintech_block(
+          block=fintech_data_five_minutes, symbol=symbol, timeframe="5m")
 
     if fintech_fifteen_minutes:
       fintech_data_fifteen_minutes = json.loads(
           fintech_fifteen_minutes.read_text(encoding="utf-8"))
-      results["fintech_fifteen_minutes"] = fintech_data_fifteen_minutes
+      results["fintech_fifteen_minutes"] = run_grok_on_fintech_block(
+          block=fintech_data_fifteen_minutes, symbol=symbol, timeframe="15m")
 
     if fintech_hourly:
       fintech_data_hourly = json.loads(
           fintech_hourly.read_text(encoding="utf-8"))
-      results["fintech_hourly"] = fintech_data_hourly
+      results["fintech_hourly"] = run_grok_on_fintech_block(
+          block=fintech_data_hourly, symbol=symbol, timeframe="60m")
 
     # Load daily and weekly data only for general analysis
     if is_general_analysis:
       if fintech_daily:
         fintech_data_daily = json.loads(
             fintech_daily.read_text(encoding="utf-8"))
-        results["fintech_daily"] = fintech_data_daily
+        results["fintech_daily"] = run_grok_on_fintech_block(
+            block=fintech_data_daily, symbol=symbol, timeframe="1D")
 
       if fintech_weekly:
         fintech_data_weekly = json.loads(
             fintech_weekly.read_text(encoding="utf-8"))
-        results["fintech_weekly"] = fintech_data_weekly
+        results["fintech_weekly"] = run_grok_on_fintech_block(
+            block=fintech_data_weekly, symbol=symbol, timeframe="1W")
 
     # Compute immediate forecast from raw Finnhub payload
     try:
