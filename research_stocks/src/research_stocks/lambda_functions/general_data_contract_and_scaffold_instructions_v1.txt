@@ -1,4 +1,4 @@
-PRE-OPEN DAILY FORECAST CONTRACT — v3.5 (2025-08-12)
+PRE-OPEN DAILY FORECAST CONTRACT — v3.9 (2025-08-12)
 
 ## Scope & Inputs (use ONLY what is provided)
 You receive ONE aggregated JSON that already contains multi-timeframe analyses. The structure is stable across symbols and timeframes:
@@ -154,6 +154,7 @@ We forecast `{open, high, low, close}` for **today’s daily bar** using the agg
    - HIGH ≥ max(OPEN,CLOSE); LOW ≤ min(OPEN,CLOSE)
    - (HIGH−LOW) ≤ 2.2×ATR_D14
    - If Weekly trend opposes S strongly (|S|>0.5), reduce the against-trend side by 20–40%.
+   - R_base must originate from ATR_D14 × regime_factor. If ATR_D14 is missing, print “R_base: no data” and OMIT any computations that require R_base (do not substitute prior-day true range or any proxy).
 
 5) **Weekly forecast (current week)**
    - Blend Weekly levels/patterns with Weekly signals (0.6/0.4). Clamp total range ≤ 1.8×ATR_W14 and do not violate already printed weekly highs/lows.
@@ -173,6 +174,11 @@ You MUST output machine-usable trade plans in SECTION 1 and a human playbook in 
 - `source_tf` ∈ {`1m`,`5m`,`15m`,`60m`,`1D`,`1W`} and must match the origin of the level/pattern used. 1m is allowed **only** for micro‑entry confirmation or dedicated micro‑scalp plans; it may not define the overall bias.
 - Gate momentum trades with trend quality: require ADX≥20 on `60m` or `1D` if available; otherwise include `note: low-trend regime` in the plan.
 - For 1m micro‑scalp plans: targets must lie **inside** the nearest 5m/15m tactical range; default position **half size** (size.risk_per_trade × 0.5).
+- Directional invalidation must match plan bias: for bullish plans, invalidated_if MUST reference a CLOSE below the stop/support level; for bearish plans, invalidated_if MUST reference a CLOSE above the stop/resistance level.
+- Provenance: Every numeric in entry/stop/targets MUST come from input levels (support/resistance.price), patterns_explained (entry/stop/targets), session_high/low, or VWAP; NEVER invent intermediate values. If a target lacks provenance, replace it with the next valid resistance/support or omit it.
+- Trailing stops: Do NOT introduce new numeric trail levels. You may say “trail at breakeven after T1” or “trail under last printed support”, but any numeric trail must equal an existing printed level.
+- Coverage caps: If Weekly has no signals AND fewer than two intraday TFs agree on momentum direction, cap S at 0.30 and cap plan confidence at 0.45.
+- ADX caps: If ADX@60m < 20 AND ADX@1D < 20 (when both available), cap plan confidence at 0.40.
 
 **Templates (fill all fields):**
 - Momentum Breakout
@@ -223,6 +229,13 @@ If `missing>0` OR a coverage gap line exists, also print:
 `⚠ Forecast risk: indicator coverage incomplete — forecast range contracted 10%.`
 (Apply the 10% contraction to HIGH/LOW before printing JSON in SECTION 1.)
 
+## Reliability guardrails (must pass)
+- Numeric–prose consistency: Do not write “above X” unless the referenced price is > X; do not write “below X” unless < X. If a conflict is detected when drafting prose, rewrite or drop the sentence.
+- Symbol anchoring: Use the top‑level `symbol` verbatim everywhere (including SECTION 1 JSON). Do not infer/replace from lower TFs.
+- Price provenance: Any price printed in SECTION 1 trade_plans MUST be traceable to an allowed source from the input (levels/patterns/VWAP/session highs/lows). If not traceable, replace or omit.
+- No back‑filled math: If a prerequisite (e.g., ATR_D14) is missing, skip dependent calculations (bands, R_base allocations) and print “no data” where applicable.
+- Confidence discipline: Apply the Coverage and ADX caps defined above *after* computing confidence, then clip to [0,1].
+
 ## Output — EXACTLY THREE SECTIONS
 
 ### SECTION 1 — concise output (JSON only)
@@ -246,9 +259,10 @@ If `missing>0` OR a coverage gap line exists, also print:
     }
   ]
 }
+// Note: Every Entry/Stop/Target printed here must come from allowed input sources and will be validated for provenance.
 
 ### SECTION 2 — step-by-step trading plan (≤ ~650 words)
-(Starts with **Prediction Summary** block: Predicted Bias, S, prevailing TF, Expected Range (R_base), Forecast OHLC, Top Drivers, Key Invalidation. Then Drivers & Conflicts, Indicator Audit (Present-Only + Coverage Snapshot), Timeframe Cards, Set-ups, Validation band, **Audit Pass** line.)
+(Starts with **Prediction Summary** block: Predicted Bias, S, prevailing TF, Expected Range (R_base), Forecast OHLC, Top Drivers, Key Invalidation. Then Drivers & Conflicts, Indicator Audit (Present-Only + Coverage Snapshot), Timeframe Cards, Set-ups, Validation band, **Audit Pass** line.) Enforce Numeric–prose consistency from Reliability guardrails.
 
 ## Timeframe Cards (1m*, 5m, 15m, 60m, 1D, 1W)
 For each TF present in the JSON, print a short card:
