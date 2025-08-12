@@ -143,17 +143,30 @@ def call_gpt_action_with_json_content(results: dict, filename: str,
     "TASK: Parse anchors and render SECTIONS 1–3 exactly as per the contract. No extra sections.")
   USER_C = "\n\n".join(user_parts)
 
-  messages = [{"role": "system", "content": SYSTEM_A},  # A (cacheable)
-    {"role": "developer", "content": DEV_B},
-    # B (cacheable; use 'developer' role if your SDK supports it)
-    {"role": "user", "content": USER_C},  # C (runtime)
-  ]
-
-  model_name = "gpt-4o-mini" if not is_general_analysis else "o3"
-  kwargs = {"temperature": 0, "seed": 42} if not is_general_analysis else {}
-
-  resp = client.chat.completions.create(model=model_name, messages=messages,
-                                        **kwargs)
+  # Build messages and client per provider
+  if not is_general_analysis:
+    # GROK (xAI): merge developer into system; use xAI key + base_url
+    merged_system = (SYSTEM_A or "").strip() + "\n\n" + (DEV_B or "").strip()
+    messages = [
+      {"role": "system", "content": merged_system},
+      {"role": "user", "content": USER_C},
+    ]
+    client = OpenAI(
+        api_key=os.getenv("GROQ_API_KEY") or os.getenv("GROQ_API_KEY"),
+        base_url="https://api.x.ai/v1",
+    )
+    kwargs = {"temperature": 0, "seed": 42}
+  else:
+    # OpenAI for general analysis: keep developer role
+    messages = [
+      {"role": "system", "content": SYSTEM_A},
+      {"role": "developer", "content": DEV_B},
+      {"role": "user", "content": USER_C},
+    ]
+    model_name = os.getenv("OPENAI_MODEL_GENERAL", "o3")
+    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    kwargs = {}
+  resp = client.chat.completions.create(model=model_name, messages=messages, **kwargs)
   content = resp.choices[0].message.content
 
   # Monitor caching: cached token count appears here on supported models
