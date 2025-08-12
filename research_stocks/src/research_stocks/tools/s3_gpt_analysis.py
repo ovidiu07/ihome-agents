@@ -44,6 +44,39 @@ def generate_presigned_url(bucket: str, key: str, expiration: int = 300) -> str:
     raise
 
 
+def load_grok_parse_json_instructions(block: dict, symbol: str, timeframe: str) -> List[Dict[str, str]]:
+  """Build a messages array (system, developer, user) for GROK parse‑JSON.
+
+  System and developer instructions are loaded from S3 (if available). The user
+  message is composed from the provided `results` JSON and `filename`.
+  Returns a list of chat messages suitable for OpenAI/xAI chat APIs.
+  """
+  # ── Load SYSTEM instructions ───────────────────────────────────────────────
+  try:
+    sys_key = "gpt/grok_parse_json_sys_instructions.txt"
+    obj = s3_client.get_object(Bucket="devtailor-transactions", Key=sys_key)
+    system_text = obj["Body"].read().decode("utf-8")
+  except ClientError as e:
+    logger.error("Could not fetch GROK SYSTEM instructions from S3: %s", e)
+    system_text = (
+      "You are a rigorous intraday market analyst. Output ONE JSON object only, "
+      "following the provided schema. Do not include prose or code fences.")
+
+  # ── Build USER (runtime) message ───────────────────────────────────────────
+  user_text = (
+      f"AUTHORITATIVE HEADER:\n"
+      f"symbol: {symbol}\n"
+      f"timeframe: {timeframe}\n"
+      "Rules: Copy the HEADER symbol and timeframe verbatim into the output. "
+      "If the block conflicts, prefer the HEADER.\n\n"
+      "Analyze the following finnhub timeframe block and return exactly one JSON object per the schema.\n\n"
+      "INPUT_BLOCK:\n" + json.dumps(block, ensure_ascii=False)
+  )
+
+  messages: List[Dict[str, str]] = [{"role": "system", "content": system_text},
+    {"role": "user", "content": user_text}, ]
+  return messages
+
 def load_system_persona_tiny(is_general_analysis: bool = True) -> str:
   """Load system instructions for the GPT call from S3."""
   try:
@@ -94,15 +127,11 @@ def _validates(markdown: str) -> bool:
 # ---------------------------------------------------------------------------
 # Core wrapper
 # ---------------------------------------------------------------------------
-def call_gpt_action_with_json_content(
-    results: dict,
-    filename: str,
-    is_general_analysis: bool = True,
-    previous_report: str | None = None,
-    max_retries: int = 1,
-) -> str:
-  SYSTEM_A = load_system_persona_tiny(is_general_analysis)              # tiny & stable
-  DEV_B    = load_data_contract_and_scaffold(is_general_analysis)       # long & stable
+def call_gpt_action_with_json_content(results: dict, filename: str,
+    is_general_analysis: bool = True, previous_report: str | None = None,
+    max_retries: int = 1, ) -> str:
+  SYSTEM_A = load_system_persona_tiny(is_general_analysis)  # tiny & stable
+  DEV_B = load_data_contract_and_scaffold(is_general_analysis)  # long & stable
   json_content = json.dumps(results, indent=2)
 
   # Build the runtime "C" message
@@ -110,18 +139,33 @@ def call_gpt_action_with_json_content(
   if not is_general_analysis and previous_report:
     user_parts.append("previous_daily_report_md:\n" + previous_report)
   user_parts.append(f"intraday_json (file={filename}):\n{json_content}")
-  user_parts.append("TASK: Parse anchors and render SECTIONS 1–3 exactly as per the contract. No extra sections.")
+  user_parts.append(
+    "TASK: Parse anchors and render SECTIONS 1–3 exactly as per the contract. No extra sections.")
   USER_C = "\n\n".join(user_parts)
 
-  messages = [
-    {"role": "system",    "content": SYSTEM_A},   # A (cacheable)
-    {"role": "developer",    "content": DEV_B},      # B (cacheable; use 'developer' role if your SDK supports it)
-    {"role": "user",      "content": USER_C},     # C (runtime)
-  ]
-
-  model_name = "gpt-4o-mini" if not is_general_analysis else "o3"
-  kwargs = {"temperature": 0, "seed": 42} if not is_general_analysis else {}
-
+  # Build messages and client per provider
+  if not is_general_analysis:
+    # GROK (xAI): merge developer into system; use xAI key + base_url
+    merged_system = (SYSTEM_A or "").strip() + "\n\n" + (DEV_B or "").strip()
+    messages = [
+      {"role": "system", "content": merged_system},
+      {"role": "user", "content": USER_C},
+    ]
+    client = OpenAI(
+        api_key=os.getenv("GROQ_API_KEY") or os.getenv("GROQ_API_KEY"),
+        base_url="https://api.x.ai/v1",
+    )
+    kwargs = {"temperature": 0, "seed": 42}
+  else:
+    # OpenAI for general analysis: keep developer role
+    messages = [
+      {"role": "system", "content": SYSTEM_A},
+      {"role": "developer", "content": DEV_B},
+      {"role": "user", "content": USER_C},
+    ]
+    model_name = os.getenv("OPENAI_MODEL_GENERAL", "o3")
+    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    kwargs = {}
   resp = client.chat.completions.create(model=model_name, messages=messages, **kwargs)
   content = resp.choices[0].message.content
 
@@ -130,7 +174,8 @@ def call_gpt_action_with_json_content(
     usage = resp.usage
     cached = getattr(usage, "prompt_tokens_details", {}).get("cached_tokens", 0)
     logger.info("finish_reason=%s cached_tokens=%s total_prompt=%s",
-                resp.choices[0].finish_reason, cached, usage.prompt_tokens if usage else None)
+                resp.choices[0].finish_reason, cached,
+                usage.prompt_tokens if usage else None)
   except Exception:
     pass
 
@@ -138,11 +183,10 @@ def call_gpt_action_with_json_content(
   return content
 
 
-
 def send_email_with_analysis(content: str, subject_filename: str):
   sender_email = os.getenv("SENDER_EMAIL") or "contact@ihomeprosolutions.ro"
   receiver_raw = os.getenv(
-    "RECEIVER_EMAIL") or "moldovan.ovidiuv@gmail.com, moldovan.iuliae@gmail.com"
+      "RECEIVER_EMAIL") or "moldovan.ovidiuv@gmail.com, moldovan.iuliae@gmail.com"
   smtp_server = os.getenv("SMTP_SERVER") or "smtppro.zoho.eu"
   smtp_port = int(os.getenv("SMTP_PORT", 587))
   smtp_username = os.getenv("SMTP_USERNAME") or "contact@ihomeprosolutions.ro"

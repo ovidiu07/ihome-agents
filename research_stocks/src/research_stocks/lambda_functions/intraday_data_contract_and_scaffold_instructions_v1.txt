@@ -1,15 +1,11 @@
-
-INTRADAY REPORT — concise, indicator-driven, pattern-complete (v3.2)
-
-Model: gpt-4o-mini
-Goal: Produce a concise, fully-actionable intraday trading report that (1) uses ONLY values present in the provided JSON, (2) silently analyzes all indicators across EVERY timeframe block, and (3) enumerates ALL patterns found in EVERY finnhub_* / fintech_* block, with readable status + next-use guidance. Output must be short, structured, decision-oriented (buy/sell/why/when), human-friendly — without printing indicator lists or audit tables or inventing numbers.
+Goal: Produce a concise, fully‑actionable intraday trading report that (1) uses ONLY values present in the provided JSON, (2) may optionally consume the prior daily MD (SECTION 1 JSON only) for bias/guardrails/open base, (3) silently analyzes indicators across available intraday timeframes (60m/15m/5m/1m), (4) enumerates ALL patterns found in EVERY finnhub_* / fintech_* block with status + next‑use guidance, and (5) outputs numeric, decision‑ready playbooks and a richer next‑price map. No invented numbers.
 
 ----------------------------------------------------------------
 INPUTS
 ----------------------------------------------------------------
 - intraday_json: A single JSON object that may contain any number of timeframe blocks. A timeframe block is any top-level key whose name matches ^(finnhub_|fintech_). Examples: finnhub_one_minute, finnhub_five_minutes, finnhub_fifteen_minutes, etc.
   • Each block may include: candles (OHLCV with UTC timestamps), technical_indicators (name/value pairs), support_resistance.levels, session_high, session_low, last_open, last_close, last_volume, next_prediction_from_finnhub (optional), patterns (array, optional).
-- previous_daily_report_md: Use ONLY to extract SECTION 1 → current_day.open as OPEN_BASE if present. Ignore all other content.
+- previous_daily_report_md (OPTIONAL): Use ONLY SECTION 1 JSON to extract: daily_bias (and score S if provided), structural_range.low/high (guardrails), current_day.open as OPEN_BASE, and optional trade_plans[] (carry over only if those prices also exist in intraday_json). Ignore prose.
 
 STRICT DATA POLICY
 - Use ONLY values from intraday_json and OPEN_BASE (if available). No invented numbers.
@@ -17,21 +13,23 @@ STRICT DATA POLICY
 - Determine last_updated_utc as: latest candle time of the finest-interval block available (prefer 1m then 5m then 15m). If the JSON provides a direct field, prefer that.
 - Freshness thresholds: 1m ≤ 7 min; 5m ≤ 15 min; 15m ≤ 30 min. Warn only if exceeded.
 - LAST_V: prefer 'last_volume' field if present; otherwise use the volume of the **last candle (v)** from the chosen finest timeframe. **Do NOT use OBV for V.**
+- Bands: when ATR5 exists, define B15=0.3×ATR5, B50=0.5×ATR5, B85=1.0×ATR5 (used for probability bands only).
 
 ----------------------------------------------------------------
 TIMEFRAME DISCOVERY & PRIORITY
 ----------------------------------------------------------------
-- Detect ALL blocks whose keys match ^(finnhub_|fintech_). Process every one.
-- For bias and trade rules, prefer 15m > 5m > 1m if multiple blocks exist; otherwise use whichever are available.
-- When naming a block in output, **copy the block key EXACTLY as it appears** (e.g., 'fintech_five_minutes'). Do not misspell it.
-- When presenting any derived level/value, **record the source TF** (which block it came from).
+- Detect ALL blocks whose keys match ^(finnhub_|fintech_). Process every one that exists.
+- For intraday bias and trade rules, use a 4‑TF context when available: 60m, 15m, 5m, 1m. If a TF is missing, renormalize weights.
+- 1m is for execution timing/micro‑structure; it must NOT override higher‑TF direction.
+- When naming a block in output, copy the block key EXACTLY (e.g., 'fintech_five_minutes').
+- For every derived level/value, record the source TF block.
 
 ----------------------------------------------------------------
 INDICATOR LOGIC (INTERNAL ONLY — DO NOT LIST THEM)
 ----------------------------------------------------------------
 - Read all indicators present under each block’s technical_indicators.
 - Aggregate into Intraday Bias S in [−1.00, +1.00].
-  • Timeframe weights (if all three exist): 15m=0.45, 5m=0.35, 1m=0.20. If a TF is missing, renormalize weights.
+  • Timeframe weights (if all present): 60m=0.35, 15m=0.35, 5m=0.20, 1m=0.10. Renormalize if missing; 1m cannot flip direction alone.
   • Categories: trend (ADX, DMI, MA slope, MACD), momentum (RSI, Stoch), volatility (ATR, BB width), volume/flow (OBV, MFI), mean-reversion (distance to VWAP/MAs).
 - Do NOT print per-indicator tables.
 - Drivers whitelist (tags only; must exist in JSON): rsi, stoch, macd, adx, dmi, vwap, obv, mfi, bbwidth, ema/sma slope, ta_signal.
@@ -39,9 +37,8 @@ INDICATOR LOGIC (INTERNAL ONLY — DO NOT LIST THEM)
 ----------------------------------------------------------------
 TRIGGER SOURCE SET (for numeric trade steps — prevents hallucination)
 ----------------------------------------------------------------
-Allowed numeric sources:
-{VWAP, session_high, session_low, last_open, last_close, support_resistance.levels (S1,S2,R1,R2...), any pattern.entry/stoploss/profit1/profit2, OPEN_BASE}.
-Allowed derivations: X ± k×ATR5 where k ∈ {0.3, 0.5, 1.0} and X ∈ the set above. No other numbers.
+Allowed numeric sources (prices must come from one of these): {VWAP, session_high, session_low, last_open, last_close, support_resistance.levels (S1,S2,R1,R2...), any pattern.entry/stoploss/profit1/profit2, OPEN_BASE}.
+Bands (around LAST_C) are allowed as: LAST_C ± {B15,B50,B85} when ATR5 exists.
 
 Indicator thresholds allowed: RSI ∈ {30, 40, 45, 50, 55, 60, 70}; ADX≥{20,25}; “reclaim above/below VWAP/Entry/Level”, Stoch cross. No other thresholds.
 
@@ -120,6 +117,7 @@ FORECAST (NEXT 45 MINUTES, 5-MIN STEPS)
 - Enforce: High ≥ max(Open, Close); Low ≤ min(Open, Close); |Close−Open| ≤ 1.2×ATR5 if ATR5 available.
 - Vary increments within bounds; never repeat identical (Open, High, Low, Close) tuples.
 - If bounds cannot be satisfied due to missing data, print “no data” for the table.
+- Also compute a single set of probabilistic bounds around LAST_C using Bands: Lower15/50/85 and Upper15/50/85 = LAST_C ± {B15,B50,B85}.
 
 ----------------------------------------------------------------
 OUTPUT FORMAT (MUST MATCH EXACTLY; NO EXTRA SECTIONS)
@@ -128,23 +126,34 @@ OUTPUT FORMAT (MUST MATCH EXACTLY; NO EXTRA SECTIONS)
    - Add one short warning only if stale or anchors missing; otherwise omit warning.
 2) Intraday Bias: {Bullish|Neutral|Bearish} (S={{value}})
    Top drivers: name@TF, name@TF, name@TF  (max 5; drivers must exist in JSON)
-3) Trade Decision Summary  (playbooks, numeric and human-friendly, using Trigger Source Set only)
+3) Next‑Price Map & Probability Bands (ATR5)
+   - Tactical band (nearest): S1={{price}} ↔ R1={{price}}  (TF sources)
+   - Distances: |C−S1|={{pts}} ({{pct}}%), |R1−C|={{pts}} ({{pct}}%) [and to VWAP if present]
+   - Bands (if ATR5): Lower15={{C−B15}}, Lower50={{C−B50}}, Lower85={{C−B85}} | Upper15={{C+B15}}, Upper50={{C+B50}}, Upper85={{C+B85}}
+   - Path hint: “Likely first touch: {S1|R1} given S and drivers; watch reclaim/failure at {VWAP|level}.”
+4) Key Levels (with correct source TF)
+   - S1: {{value}} — rationale (TF=<block>)
+   - S2: {{value}} — rationale (TF=<block>)
+   - R1: {{value}} — rationale (TF=<block>)
+   - R2: {{value}} — rationale (TF=<block>)
+5) Trade Decision Summary  (playbooks, numeric and human‑friendly, using Trigger Source Set only)
    - Buy when: ...
    - Sell when: ...
    - Invalidation: ...
-4) Key Levels (with correct source TF)
-   - S1: value — rationale (TF=<block>)
-   - S2: value — rationale (TF=<block>)
-   - R1: value — rationale (TF=<block>)
-   - R2: value — rationale (TF=<block>)
-5) Pattern Digest (all blocks)
-   Coverage: 1m={{count_1m}}; 5m={{count_5m}}; 15m={{count_15m}}
+   - RR Sketch: Plan=<name> Entry={{e}} Stop={{s}} T1={{t1}} (RR={{(t1−e)/(e−s)}}) [T2={{t2}} (RR={{(t2−e)/(e−s)}})]
+6) Pattern Digest (all blocks)
+   Coverage: 60m={{count_60m}}; 15m={{count_15m}}; 5m={{count_5m}}; 1m={{count_1m}}
    - TF=<block> — <patternname> (<patterntype>) — Status: <status> — Entry=<entry>, Stop=<stoploss>, TP1=<profit1>[, TP2=<profit2>]
      Use next: <guidance per status & direction>
    - (repeat for every pattern; if none for a TF, include a single “TF=<block> — (no patterns)” line)
-6) 5-Minute Forecast (next 45 min; UTC)
-   UTC | Open | High* | Low* | Close*   (9 rows only)
-
+7) 5‑Minute Forecast (next 45 min; UTC)
+   UTC | Open | High* | Low* | Close*   (9 rows only).  Append one line: “Bands: L15={{..}} L50={{..}} L85={{..}} | U15={{..}} U50={{..}} U85={{..}}” if ATR5 exists.
+8) Plain‑English Guide (for non‑traders)
+   In one short paragraph (≤ 120 words, Grade‑8 reading level), explain what to do next using the printed levels only:
+   - If price closes ABOVE R1 and holds: consider a SMALL buy toward T1; exit if it falls back BELOW R1.
+   - If price closes BELOW S1 and cannot reclaim it: avoid new longs (or consider a SMALL short) toward S2; exit if back ABOVE S1.
+   - If price stays between S1 and R1: wait; trade only after a clear break with a close and a hold.
+   Include: today’s directional stance (Bullish/Neutral/Bearish) in plain words, and a single safety rule (e.g., “use small size; respect the printed Stop”). Do NOT introduce new numbers; reuse Entry/Stop/Targets/S1/S2/R1/R2/VWAP already printed above.
 ----------------------------------------------------------------
 STYLE & VALIDATION
 ----------------------------------------------------------------
@@ -156,3 +165,7 @@ STYLE & VALIDATION
 - Enforce level spacing & correct TF labeling for each level.
 - **Pattern coverage self-check:** if a block has patterns in JSON but none listed, regenerate Pattern Digest until the counts match.
 - Do not add extra sections beyond the specified format.
+- RR Sketch must compute using only the printed Entry/Stop/Targets; no hidden values.
+- Probability Bands may only be computed when ATR5 exists; otherwise omit bands lines.
+- Plain‑English Guide must not invent new numeric values; it may only reference numbers already printed in sections 1–7.
+- Plain‑English Guide must avoid jargon (e.g., no “order flow,” “divergence”); keep reading level ≤ Grade‑8 and ≤ 120 words.

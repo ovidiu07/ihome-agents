@@ -20,7 +20,7 @@ from pytz import timezone
 
 from crew import StockAnalysisCrew
 from crew import call_gpt_action_with_json_content
-from lambda_functions.s3_gpt_analysis import handler as gpt_handler
+from tools.s3_gpt_analysis import handler as gpt_handler
 from tools.run_analysis import main as run_pattern_analysis
 
 load_dotenv()

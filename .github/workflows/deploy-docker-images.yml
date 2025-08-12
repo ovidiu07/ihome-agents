@@ -39,6 +39,7 @@ jobs:
             export AWS_SECRET_ACCESS_KEY="${{ secrets.AWS_SECRET_ACCESS_KEY }}"
             export AWS_DEFAULT_REGION="${{ secrets.AWS_DEFAULT_REGION }}"
             export OPENAI_API_KEY="${{ secrets.OPENAI_API_KEY }}"
+            export GROQ_API_KEY="${{ secrets.GROQ_API_KEY }}"
             export SENDER_EMAIL="${{ vars.SENDER_EMAIL }}"
             export RECEIVER_EMAIL="${{ vars.RECEIVER_EMAIL }}"
             export SMTP_SERVER="${{ vars.SMTP_SERVER }}"
