@@ -142,11 +142,11 @@ def call_gpt_action_with_json_content(results: dict, filename: str,
   user_parts.append(
     "TASK: Parse anchors and render SECTIONS 1–3 exactly as per the contract. No extra sections.")
   USER_C = "\n\n".join(user_parts)
-
   # Build messages and client per provider
   if not is_general_analysis:
     # GROK (xAI): merge developer into system; use xAI key + base_url
     merged_system = (SYSTEM_A or "").strip() + "\n\n" + (DEV_B or "").strip()
+    model_name = os.getenv("GROK_MODEL", "grok-3-mini")
     messages = [
       {"role": "system", "content": merged_system},
       {"role": "user", "content": USER_C},
@@ -166,6 +166,8 @@ def call_gpt_action_with_json_content(results: dict, filename: str,
     model_name = os.getenv("OPENAI_MODEL_GENERAL", "o3")
     client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
     kwargs = {}
+
+  print(f"✅ Model name is  {model_name}")
   resp = client.chat.completions.create(model=model_name, messages=messages, **kwargs)
   content = resp.choices[0].message.content
 
