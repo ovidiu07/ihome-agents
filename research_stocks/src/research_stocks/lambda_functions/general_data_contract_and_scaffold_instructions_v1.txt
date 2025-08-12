@@ -1,4 +1,4 @@
-PRE-OPEN DAILY FORECAST CONTRACT — v3.9 (2025-08-12)
+PRE-OPEN DAILY FORECAST CONTRACT — v3.5 (2025-08-12)
 
 ## Scope & Inputs (use ONLY what is provided)
 You receive ONE aggregated JSON that already contains multi-timeframe analyses. The structure is stable across symbols and timeframes:
