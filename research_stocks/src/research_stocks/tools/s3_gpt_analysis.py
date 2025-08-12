@@ -44,8 +44,7 @@ def generate_presigned_url(bucket: str, key: str, expiration: int = 300) -> str:
     raise
 
 
-def load_grok_parse_json_instructions(
-) -> List[Dict[str, str]]:
+def load_grok_parse_json_instructions(block: dict, symbol: str, timeframe: str) -> List[Dict[str, str]]:
   """Build a messages array (system, developer, user) for GROK parse‑JSON.
 
   System and developer instructions are loaded from S3 (if available). The user
@@ -61,77 +60,22 @@ def load_grok_parse_json_instructions(
     logger.error("Could not fetch GROK SYSTEM instructions from S3: %s", e)
     system_text = (
       "You are a rigorous intraday market analyst. Output ONE JSON object only, "
-      "following the provided schema. Do not include prose or code fences."
-    )
-
-  # ── Load DEVELOPER contract/schema (fallback included) ─────────────────────
-  try:
-    dev_key = "gpt/grok_parse_json_contract_instructions.txt"
-    obj2 = s3_client.get_object(Bucket="devtailor-transactions", Key=dev_key)
-    developer_text = obj2["Body"].read().decode("utf-8")
-  except ClientError as e:
-    logger.error("Could not fetch GROK DEVELOPER contract from S3: %s", e)
-    developer_text = (
-      "Output rules (critical):\n"
-      "- Valid JSON only (single object). No prose, no markdown.\n"
-      "- Use only numbers present in the input JSON. If missing, use empty arrays.\n"
-      "- bias ∈ {\"bullish\", \"bearish\", \"neutral\"}.\n"
-      "- direction ∈ {\"rising\", \"falling\", \"flat\"}.\n"
-      "- Derive timeframe from resolution: 1→1m, 5→5m, 15→15m, 60→60m, D→1D, W→1W.\n\n"
-      "Final JSON schema (field order):\n"
-      "{\n"
-      "  \"timeframe\": \"<derived>\",\n"
-      "  \"symbol\": \"<symbol>\",\n"
-      "  \"summary\": \"one-paragraph objective take\",\n"
-      "  \"bias\": \"bullish|bearish|neutral\",\n"
-      "  \"signals\": [ { \"name\": \"RSI\", \"value\": 47.2, \"direction\": \"rising|falling|flat\" } ],\n"
-      "  \"levels\": {\n"
-      "    \"support\": [ { \"price\": 0.0, \"why\": \"string\" } ],\n"
-      "    \"resistance\": [ { \"price\": 0.0, \"why\": \"string\" } ]\n"
-      "  },\n"
-      "  \"setups\": [ { \n"
-      "    \"type\": \"breakout|reversal|pullback\",\n"
-      "    \"entry\": 0.0,\n"
-      "    \"stop\": 0.0,\n"
-      "    \"targets\": [0.0],\n"
-      "    \"invalidated_if\": \"condition\"\n"
-      "  } ],\n"
-      "  \"patterns_explained\": [ {\n"
-      "    \"name\": \"<pattern>\",\n"
-      "    \"type\": \"bullish|bearish\",\n"
-      "    \"status\": \"<status>\",\n"
-      "    \"entry\": 0.0,\n"
-      "    \"stop\": 0.0,\n"
-      "    \"targets\": [0.0],\n"
-      "    \"comment\": \"One sentence grounded in input fields.\"\n"
-      "  } ]\n"
-      "}\n"
-    )
+      "following the provided schema. Do not include prose or code fences.")
 
   # ── Build USER (runtime) message ───────────────────────────────────────────
-  user_parts: List[str] = [
-    "TASK: Return ONE JSON object exactly per the schema. Use only values present in the input. No prose."]
-  user_text = "\n\n".join(user_parts)
+  user_text = (
+      f"AUTHORITATIVE HEADER:\n"
+      f"symbol: {symbol}\n"
+      f"timeframe: {timeframe}\n"
+      "Rules: Copy the HEADER symbol and timeframe verbatim into the output. "
+      "If the block conflicts, prefer the HEADER.\n\n"
+      "Analyze the following finnhub timeframe block and return exactly one JSON object per the schema.\n\n"
+      "INPUT_BLOCK:\n" + json.dumps(block, ensure_ascii=False)
+  )
 
-  messages: List[Dict[str, str]] = [
-    {"role": "system", "content": system_text},
-    {"role": "developer", "content": developer_text},
-    {"role": "user", "content": user_text},
-  ]
+  messages: List[Dict[str, str]] = [{"role": "system", "content": system_text},
+    {"role": "user", "content": user_text}, ]
   return messages
-
-# Backward-compat wrapper (legacy callers may still expect a simple system string)
-def load_grok_system_instructions_only() -> str:
-  try:
-    key = "gpt/grok_parse_json_instructions.txt"
-    obj = s3_client.get_object(Bucket="devtailor-transactions", Key=key)
-    return obj["Body"].read().decode("utf-8")
-  except ClientError as e:
-    logger.error("Could not fetch instructions from S3: %s", e)
-    return (
-      "You are a rigorous intraday market analyst. Output ONE JSON object only, "
-      "following the provided schema. Do not include prose or code fences."
-    )
 
 def load_system_persona_tiny(is_general_analysis: bool = True) -> str:
   """Load system instructions for the GPT call from S3."""
@@ -183,15 +127,11 @@ def _validates(markdown: str) -> bool:
 # ---------------------------------------------------------------------------
 # Core wrapper
 # ---------------------------------------------------------------------------
-def call_gpt_action_with_json_content(
-    results: dict,
-    filename: str,
-    is_general_analysis: bool = True,
-    previous_report: str | None = None,
-    max_retries: int = 1,
-) -> str:
-  SYSTEM_A = load_system_persona_tiny(is_general_analysis)              # tiny & stable
-  DEV_B    = load_data_contract_and_scaffold(is_general_analysis)       # long & stable
+def call_gpt_action_with_json_content(results: dict, filename: str,
+    is_general_analysis: bool = True, previous_report: str | None = None,
+    max_retries: int = 1, ) -> str:
+  SYSTEM_A = load_system_persona_tiny(is_general_analysis)  # tiny & stable
+  DEV_B = load_data_contract_and_scaffold(is_general_analysis)  # long & stable
   json_content = json.dumps(results, indent=2)
 
   # Build the runtime "C" message
@@ -199,19 +139,21 @@ def call_gpt_action_with_json_content(
   if not is_general_analysis and previous_report:
     user_parts.append("previous_daily_report_md:\n" + previous_report)
   user_parts.append(f"intraday_json (file={filename}):\n{json_content}")
-  user_parts.append("TASK: Parse anchors and render SECTIONS 1–3 exactly as per the contract. No extra sections.")
+  user_parts.append(
+    "TASK: Parse anchors and render SECTIONS 1–3 exactly as per the contract. No extra sections.")
   USER_C = "\n\n".join(user_parts)
 
-  messages = [
-    {"role": "system",    "content": SYSTEM_A},   # A (cacheable)
-    {"role": "developer",    "content": DEV_B},      # B (cacheable; use 'developer' role if your SDK supports it)
-    {"role": "user",      "content": USER_C},     # C (runtime)
+  messages = [{"role": "system", "content": SYSTEM_A},  # A (cacheable)
+    {"role": "developer", "content": DEV_B},
+    # B (cacheable; use 'developer' role if your SDK supports it)
+    {"role": "user", "content": USER_C},  # C (runtime)
   ]
 
   model_name = "gpt-4o-mini" if not is_general_analysis else "o3"
   kwargs = {"temperature": 0, "seed": 42} if not is_general_analysis else {}
 
-  resp = client.chat.completions.create(model=model_name, messages=messages, **kwargs)
+  resp = client.chat.completions.create(model=model_name, messages=messages,
+                                        **kwargs)
   content = resp.choices[0].message.content
 
   # Monitor caching: cached token count appears here on supported models
@@ -219,7 +161,8 @@ def call_gpt_action_with_json_content(
     usage = resp.usage
     cached = getattr(usage, "prompt_tokens_details", {}).get("cached_tokens", 0)
     logger.info("finish_reason=%s cached_tokens=%s total_prompt=%s",
-                resp.choices[0].finish_reason, cached, usage.prompt_tokens if usage else None)
+                resp.choices[0].finish_reason, cached,
+                usage.prompt_tokens if usage else None)
   except Exception:
     pass
 
@@ -227,11 +170,10 @@ def call_gpt_action_with_json_content(
   return content
 
 
-
 def send_email_with_analysis(content: str, subject_filename: str):
   sender_email = os.getenv("SENDER_EMAIL") or "contact@ihomeprosolutions.ro"
   receiver_raw = os.getenv(
-    "RECEIVER_EMAIL") or "moldovan.ovidiuv@gmail.com, moldovan.iuliae@gmail.com"
+      "RECEIVER_EMAIL") or "moldovan.ovidiuv@gmail.com, moldovan.iuliae@gmail.com"
   smtp_server = os.getenv("SMTP_SERVER") or "smtppro.zoho.eu"
   smtp_port = int(os.getenv("SMTP_PORT", 587))
   smtp_username = os.getenv("SMTP_USERNAME") or "contact@ihomeprosolutions.ro"

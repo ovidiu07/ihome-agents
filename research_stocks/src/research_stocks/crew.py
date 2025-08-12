@@ -11,8 +11,8 @@ from functools import lru_cache
 from pathlib import Path
 from urllib.parse import quote_plus  # ← NEW
 from datetime import datetime, timezone
-from lambda_functions.s3_gpt_analysis import call_gpt_action_with_json_content
-from lambda_functions.s3_gpt_analysis import save_analysis
+from tools.s3_gpt_analysis import call_gpt_action_with_json_content
+from tools.s3_gpt_analysis import save_analysis
 from tools.pattern_analysis.fintech import fetch_all
 from tools.pattern_analysis.forecasting import next_prediction_from_finnhub
 from tools.pattern_analysis.utils import run_grok_on_fintech_block
