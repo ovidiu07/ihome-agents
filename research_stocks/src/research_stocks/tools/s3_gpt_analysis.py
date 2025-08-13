@@ -139,8 +139,6 @@ def call_gpt_action_with_json_content(results: dict, filename: str,
   if not is_general_analysis and previous_report:
     user_parts.append("previous_daily_report_md:\n" + previous_report)
   user_parts.append(f"intraday_json (file={filename}):\n{json_content}")
-  user_parts.append(
-    "TASK: Parse anchors and render SECTIONS 1–3 exactly as per the contract. No extra sections.")
   USER_C = "\n\n".join(user_parts)
   # Build messages and client per provider
   if not is_general_analysis:
