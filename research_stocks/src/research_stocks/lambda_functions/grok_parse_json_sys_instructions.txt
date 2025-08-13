@@ -20,6 +20,7 @@ STRICT RULES
 - For directions, use exactly one of: "rising", "falling", "flat".
 - For bias, use exactly one of: "bullish", "bearish", "neutral".
 - Treat zero-filled or missing indicator arrays as unavailable.
+- The output 'signals' array MUST enumerate **all** available indicators under 'technical_indicators' (and any supported aggregate fields) — do not limit or downselect.
 
 MAPPING HINTS
 - timeframe = map resolution: 1→"1m", 5→"5m", 15→"15m", 60→"60m", D→"1D", W→"1W". If unknown, "".
@@ -51,6 +52,10 @@ Final JSON schema (field order must match exactly)
   "timeframe": "<derived timeframe>",
   "symbol": "<symbol>",
   "summary": "one-paragraph objective take",
+  "session_high": 0.0,   // numeric from the SAME block; omit or null if missing
+  "session_low": 0.0,    // numeric from the SAME block; omit or null if missing
+  "last_open": 0.0,      // numeric from the SAME block; omit or null if missing
+  "last_close": 0.0,     // numeric from the SAME block; omit or null if missing
   "bias": "bullish|bearish|neutral",
   "signals": [
     { "name": "RSI", "value": 47.2, "direction": "rising|falling|flat" }
@@ -82,11 +87,25 @@ Final JSON schema (field order must match exactly)
 }
 
 Signals guidance
-- Consider these common indicators if present under `technical_indicators`:
-  • RSI.rsi, STOCH.slowk/slowd (or STOCHF.fastk/fastd), MACD.macd/macdSignal/macdHist, ADX.adx, EMA.ema, SMA.sma, WMA.wma, DEMA.dema, BBANDS.lowerband/middleband/upperband, ATR.atr, NATR.natr, MFI.mfi, CCI.cci.
-- value = most recent element (last non-zero if earlier values are zero-filled).
-- direction = compare the last 3–5 non-zero values: last>first→"rising", last<first→"falling", else "flat".
-- Include up to ~5 signals; pick the most informative present in the input.
+- You MUST output **all** indicator series present under `technical_indicators` (and, if present, `aggregate_indicator.*`) as separate items in `signals` — no maximum limit.
+- **Flatten nested objects**: create one signal per leaf array using the naming pattern `<INDICATOR>[.<subfield>]`.
+  Examples to follow exactly:
+  • `SMA.sma`, `EMA.ema`, `WMA.wma`, `DEMA.dema`
+  • `MACD.macd`, `MACD.macdSignal`, `MACD.macdHist`; `MACDEXT.macd`, `MACDEXT.macdSignal`, `MACDEXT.macdHist`
+  • `STOCH.slowk`, `STOCH.slowd`; `STOCHF.fastk`, `STOCHF.fastd`; `STOCHRSI.fastk`, `STOCHRSI.fastd`
+  • `BBANDS.lowerband`, `BBANDS.middleband`, `BBANDS.upperband`
+  • `RSI.rsi`, `ADX.adx`, `ADXR.adxr`, `DX.dx`, `PLUSDI.plusdi`, `MINUSDI.minusdi`, `PLUSDM.plusdm`, `MINUSDM.minusdm`
+  • `MFI.mfi`, `CCI.cci`, `CMO.cmo`, `MOM.mom`, `ROC.roc`, `ROCR.rocr`, `TRIX.trix`, `ULTOSC.ultosc`, `BOP.bop`
+  • `MIDPOINT.midpoint`, `MIDPRICE.midprice`, `SAR.sar`, `TRANGE.trange`, `ATR.atr`, `NATR.natr`
+  • `AD.ad`, `ADOSC.adosc`, `OBV.obv`, `AROON.aroonup`, `AROON.aroondown`, `AROONOSC.aroonosc`
+  • `aggregate.trend.adx` (from `aggregate_indicator.trend.adx` when present)
+- **value** = the most recent **non-zero** element of the series; if all recent values are zero, use the final element and set direction to `"flat"`.
+- **direction** = compare the last 3–5 **non-zero** values (use as many as available):
+  - last > first → `"rising"`
+  - last < first → `"falling"`
+  - otherwise → `"flat"`
+- Preserve exact casing shown above. If an indicator appears that is not listed, still include it using the same `<INDICATOR>.<subfield>` naming.
+- Do **not** synthesize or average multiple indicators into one row; emit a separate row for each leaf series.
 
 Levels guidance
 - Determine `last_price` from top-level `last_close` if present; else `candles.c[-1]`.
