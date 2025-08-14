@@ -123,7 +123,7 @@ def run_grok_on_fintech_block(block: dict, *, symbol: str, timeframe: str,
   if not isinstance(block, dict):
     raise TypeError("block must be a dict of fintech data")
 
-  model = model or os.getenv("GROK_MODEL", "grok-3-mini")
+  model = model or os.getenv("GROK_MODEL", "grok-3")
   endpoint = endpoint or os.getenv("GROK_ENDPOINT",
                                    "https://api.x.ai/v1/chat/completions")
   base_url = os.getenv("GROK_BASE_URL") or (endpoint.replace("/chat/completions", "") if endpoint else "https://api.x.ai/v1")

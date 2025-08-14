@@ -144,7 +144,7 @@ def call_gpt_action_with_json_content(results: dict, filename: str,
   if not is_general_analysis:
     # GROK (xAI): merge developer into system; use xAI key + base_url
     merged_system = (SYSTEM_A or "").strip() + "\n\n" + (DEV_B or "").strip()
-    model_name = os.getenv("GROK_MODEL", "grok-3-mini")
+    model_name = os.getenv("GROK_MODEL", "grok-3")
     messages = [
       {"role": "system", "content": merged_system},
       {"role": "user", "content": USER_C},
