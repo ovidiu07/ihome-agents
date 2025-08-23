@@ -188,17 +188,17 @@ result
 
 // ----------------------------- FLOW -----------------------------
 f_flow() =>
-    mfiVal = ta.mfi(high, low, close, volume, mfi_len)
-    float res = na
-    if mfiVal > flow_overbought
-        res := -1
-    else if mfiVal < flow_oversold
-        res := 1
-    else if mfiVal > 50
-        res := 1
-    else
-        res := -1
-    res
+mfiVal = ta.mfi(high, low, close, volume, mfi_len)
+float res = na
+if mfiVal > flow_overbought
+  res := -1
+else if mfiVal < flow_oversold
+  res := 1
+else if mfiVal > 50
+  res := 1
+else
+res := -1
+res
 
 // ---------------------------- REGIME ----------------------------
 f_regime() =>
