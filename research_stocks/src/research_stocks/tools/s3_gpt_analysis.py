@@ -186,7 +186,7 @@ def call_gpt_action_with_json_content(results: dict, filename: str,
 def send_email_with_analysis(content: str, subject_filename: str):
   sender_email = os.getenv("SENDER_EMAIL") or "contact@ihomeprosolutions.ro"
   receiver_raw = os.getenv(
-      "RECEIVER_EMAIL") or "moldovan.ovidiuv@gmail.com, moldovan.iuliae@gmail.com"
+      "RECEIVER_EMAIL") or "moldovan.ovidiuv@gmail.com, moldovan.iuliae@gmail.com, seufertdaniel@gmx.de"
   smtp_server = os.getenv("SMTP_SERVER") or "smtppro.zoho.eu"
   smtp_port = int(os.getenv("SMTP_PORT", 587))
   smtp_username = os.getenv("SMTP_USERNAME") or "contact@ihomeprosolutions.ro"
