@@ -17,6 +17,36 @@ if os.getenv("FORECAST_DEBUG") == "1":
     logging.basicConfig(level=logging.DEBUG)
 
 
+__all__ = [
+    "refine_next_predictions",
+    "probabilistic_day_forecast",
+    "next_prediction_from_finnhub",
+    "compute_sma",
+    "compute_ema",
+    "compute_rsi",
+    "compute_macd",
+    "compute_bollinger_bands",
+    "compute_stochastic",
+    "compute_atr",
+    "compute_obv",
+    "compute_mfi",
+    "compute_vwap",
+    "resample_ohlcv",
+    "compute_mtf_trend_bias",
+    "compute_mtf_volatility_profile",
+    "compute_cross_tf_correlation",
+    "compute_pivot_points_per_tf",
+    "compute_volume_profile",
+    "compute_session_statistics",
+    "compute_time_decay_features",
+    "compute_pattern_strength",
+    "compute_rate_of_change",
+    "compute_statistical_descriptors",
+    "compute_risk_metrics",
+    "compute_liquidity_metrics",
+]
+
+
 # forecasting.py
 # -------------
 # Functions for forecasting based on pattern analysis
@@ -653,6 +683,255 @@ def _macd(series: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9) ->
     return macd, signal_line, hist
 
 
+# ---------------------------------------------------------------------------
+# Public indicator helpers
+# ---------------------------------------------------------------------------
+
+def compute_sma(series: pd.Series, window: int) -> List[float]:
+    """Return the Simple Moving Average (SMA)."""
+    return series.rolling(window).mean().tolist()
+
+
+def compute_ema(series: pd.Series, span: int) -> List[float]:
+    """Return the Exponential Moving Average (EMA)."""
+    return series.ewm(span=span, adjust=False).mean().tolist()
+
+
+def compute_rsi(series: pd.Series, period: int) -> List[float]:
+    """Return the Relative Strength Index (RSI)."""
+    return _rsi(series, period).tolist()
+
+
+def compute_macd(series: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9) -> Dict[str, List[float]]:
+    """Return MACD components as lists."""
+    macd, sig, hist = _macd(series, fast, slow, signal)
+    return {"macd": macd.tolist(), "signal": sig.tolist(), "hist": hist.tolist()}
+
+
+def compute_bollinger_bands(series: pd.Series, window: int = 20, num_std: float = 2.0) -> Dict[str, List[float]]:
+    """Return Bollinger Bands (upper, middle, lower)."""
+    sma = series.rolling(window).mean()
+    std = series.rolling(window).std()
+    upper = sma + num_std * std
+    lower = sma - num_std * std
+    return {
+        "upper": upper.tolist(),
+        "middle": sma.tolist(),
+        "lower": lower.tolist(),
+    }
+
+
+def compute_stochastic(high: pd.Series, low: pd.Series, close: pd.Series, k_period: int = 14, d_period: int = 3) -> Dict[str, List[float]]:
+    """Return the Stochastic Oscillator %K and %D lines."""
+    lowest_low = low.rolling(k_period).min()
+    highest_high = high.rolling(k_period).max()
+    percent_k = 100 * (close - lowest_low) / (highest_high - lowest_low)
+    percent_d = percent_k.rolling(d_period).mean()
+    return {"%K": percent_k.tolist(), "%D": percent_d.tolist()}
+
+
+def compute_atr(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> List[float]:
+    """Return the Average True Range (ATR)."""
+    prev_close = close.shift()
+    tr = pd.concat([
+        high - low,
+        (high - prev_close).abs(),
+        (low - prev_close).abs(),
+    ], axis=1).max(axis=1)
+    return tr.rolling(period).mean().tolist()
+
+
+def compute_obv(close: pd.Series, volume: pd.Series) -> List[float]:
+    """Return the On-Balance Volume (OBV)."""
+    direction = np.sign(close.diff().fillna(0))
+    obv = (volume * direction).cumsum()
+    return obv.tolist()
+
+
+def compute_mfi(high: pd.Series, low: pd.Series, close: pd.Series, volume: pd.Series, period: int = 14) -> List[float]:
+    """Return the Money Flow Index (MFI)."""
+    typical = (high + low + close) / 3
+    money_flow = typical * volume
+    pos_flow = money_flow.where(typical > typical.shift(), 0.0)
+    neg_flow = money_flow.where(typical < typical.shift(), 0.0)
+    pos_sum = pos_flow.rolling(period).sum()
+    neg_sum = neg_flow.rolling(period).sum()
+    mfi = 100 - 100 / (1 + pos_sum / neg_sum.replace(0, np.nan))
+    return mfi.tolist()
+
+
+def compute_vwap(high: pd.Series, low: pd.Series, close: pd.Series, volume: pd.Series) -> List[float]:
+    """Return the Volume Weighted Average Price (VWAP)."""
+    typical_price = (high + low + close) / 3
+    cum_tp_vol = (typical_price * volume).cumsum()
+    cum_vol = volume.cumsum()
+    vwap = cum_tp_vol / cum_vol
+    return vwap.tolist()
+
+
+def resample_ohlcv(df: pd.DataFrame, target_tf: str) -> Dict[str, List[Any]]:
+    """Resample OHLCV data to the given timeframe."""
+    ohlc_dict = {
+        "Open": "first",
+        "High": "max",
+        "Low": "min",
+        "Close": "last",
+        "Volume": "sum",
+    }
+    res = df.resample(target_tf).apply(ohlc_dict).dropna()
+    res.index = res.index.astype("datetime64[ns]")
+    resampled = res.reset_index().to_dict("list")
+    return resampled
+
+
+def compute_mtf_trend_bias(data_dict: Dict[str, pd.DataFrame]) -> Dict[str, str]:
+    """Determine trend bias per timeframe using SMA comparison."""
+    out: Dict[str, str] = {}
+    for tf, df in data_dict.items():
+        if df.empty:
+            out[tf] = "neutral"
+            continue
+        sma = df["Close"].rolling(20).mean().iloc[-1]
+        last = df["Close"].iloc[-1]
+        if last > sma:
+            out[tf] = "bullish"
+        elif last < sma:
+            out[tf] = "bearish"
+        else:
+            out[tf] = "neutral"
+    return out
+
+
+def compute_mtf_volatility_profile(data_dict: Dict[str, pd.DataFrame], period: int = 14) -> Dict[str, float]:
+    """Return normalized ATR per timeframe."""
+    profile: Dict[str, float] = {}
+    for tf, df in data_dict.items():
+        if df.empty:
+            profile[tf] = float("nan")
+            continue
+        atr = pd.Series(compute_atr(df["High"], df["Low"], df["Close"], period))
+        last_atr = atr.iloc[-1]
+        close = df["Close"].iloc[-1]
+        profile[tf] = float(last_atr / close) if close else float("nan")
+    return profile
+
+
+def compute_cross_tf_correlation(data_dict: Dict[str, pd.Series], metric: str = "returns") -> Dict[str, Dict[str, float]]:
+    """Return correlation matrix across timeframes."""
+    frames = {}
+    for tf, series in data_dict.items():
+        if metric == "returns":
+            frames[tf] = np.log(series).diff()
+        else:
+            frames[tf] = series
+    df = pd.DataFrame(frames)
+    corr = df.corr().fillna(0)
+    return corr.to_dict()
+
+
+def compute_pivot_points_per_tf(df: pd.DataFrame) -> Dict[str, List[float]]:
+    """Return pivot point levels."""
+    pivot = (df["High"] + df["Low"] + df["Close"]) / 3
+    r1 = 2 * pivot - df["Low"]
+    s1 = 2 * pivot - df["High"]
+    r2 = pivot + (df["High"] - df["Low"])
+    s2 = pivot - (df["High"] - df["Low"])
+    return {
+        "pivot": pivot.tolist(),
+        "r1": r1.tolist(),
+        "s1": s1.tolist(),
+        "r2": r2.tolist(),
+        "s2": s2.tolist(),
+    }
+
+
+def compute_volume_profile(df: pd.DataFrame, bins: int = 20) -> Dict[str, List[Any]]:
+    """Return histogram of volume traded at each price bin."""
+    price = (df["High"] + df["Low"]) / 2
+    vol = df["Volume"]
+    hist, edges = np.histogram(price, bins=bins, weights=vol)
+    return {"volume": hist.tolist(), "price_bins": edges.tolist()}
+
+
+def compute_session_statistics(df: pd.DataFrame, session_defs: Dict[str, Tuple[str, str]]) -> Dict[str, Dict[str, float]]:
+    """Aggregate VWAP, range, and volume per trading session."""
+    stats: Dict[str, Dict[str, float]] = {}
+    for name, (start, end) in session_defs.items():
+        sess = df.between_time(start, end)
+        if sess.empty:
+            stats[name] = {"vwap": float("nan"), "range": float("nan"), "volume": 0.0}
+            continue
+        vwap = compute_vwap(sess["High"], sess["Low"], sess["Close"], sess["Volume"])[-1]
+        rng = float((sess["High"].max() - sess["Low"].min()))
+        volume = float(sess["Volume"].sum())
+        stats[name] = {"vwap": float(vwap), "range": rng, "volume": volume}
+    return stats
+
+
+def compute_time_decay_features(df: pd.DataFrame, half_life: float = 10.0) -> Dict[str, List[float]]:
+    """Apply exponential decay weighting to numeric columns."""
+    out: Dict[str, List[float]] = {}
+    weights = np.exp(np.log(0.5) / half_life * np.arange(len(df))[::-1])
+    for col in df.select_dtypes(include=[np.number]).columns:
+        out[col] = (df[col] * weights).ewm(alpha=1 / half_life, adjust=False).mean().tolist()
+    return out
+
+
+def compute_pattern_strength(patterns: List[Dict[str, Any]], reliab_map: Dict[str, float], half_life_h: float = 24.0) -> List[float]:
+    """Return decayed pattern strength values."""
+    now = pd.Timestamp.utcnow()
+    strengths: List[float] = []
+    for p in patterns:
+        base = reliab_map.get(p["pattern"], 0.5)
+        end = pd.to_datetime(p["end_date"], utc=True)
+        age_h = (now - end).total_seconds() / 3600
+        decay = math.exp(-age_h / half_life_h)
+        odds = base / max(1 - base, 1e-6)
+        strengths.append(math.log(odds) * decay)
+    return strengths
+
+
+def compute_rate_of_change(series: pd.Series, period: int = 1) -> List[float]:
+    """Return Rate of Change (ROC) in percent."""
+    roc = series.pct_change(periods=period) * 100
+    return roc.tolist()
+
+
+def compute_statistical_descriptors(series: pd.Series, window: int = 20) -> Dict[str, List[float]]:
+    """Return rolling statistical descriptors."""
+    roll = series.rolling(window)
+    return {
+        "mean": roll.mean().tolist(),
+        "var": roll.var().tolist(),
+        "skew": roll.skew().tolist(),
+        "kurt": roll.kurt().tolist(),
+        "q25": roll.quantile(0.25).tolist(),
+        "q75": roll.quantile(0.75).tolist(),
+    }
+
+
+def compute_risk_metrics(prices: pd.Series, stoploss: float, targets: float) -> Dict[str, float]:
+    """Return basic risk metrics MAE and MFE."""
+    returns = prices.pct_change().fillna(0)
+    cum = returns.cumsum()
+    mae = float(cum.min())
+    mfe = float(cum.max())
+    rr = abs(targets / stoploss) if stoploss != 0 else float("inf")
+    return {"mae": mae, "mfe": mfe, "rr": rr}
+
+
+def compute_liquidity_metrics(df: pd.DataFrame) -> Dict[str, float]:
+    """Estimate simple liquidity metrics from OHLCV data."""
+    spread = (df["High"] - df["Low"]).rolling(1).mean()
+    imbalance = df["Volume"].diff().abs().rolling(1).mean()
+    depth = df["Volume"].rolling(5).mean()
+    return {
+        "spread": float(spread.mean()),
+        "imbalance": float(imbalance.mean()),
+        "depth": float(depth.mean()),
+    }
+
+
 def next_prediction_from_finnhub(payload: Dict[str, Any]) -> Dict[str, Any]:
     """Return a single OHLC forecast by stacking multiple timeframes.
 
@@ -776,6 +1055,51 @@ def next_prediction_from_finnhub(payload: Dict[str, Any]) -> Dict[str, Any]:
 if __name__ == "__main__":
     # Basic self-test
     from pprint import pprint
+
+    rng = pd.date_range("2024-01-01", periods=30, freq="D")
+    base = pd.Series(np.linspace(100, 110, 30), index=rng)
+    df_ex = pd.DataFrame(
+        {
+            "Open": base,
+            "High": base + np.random.rand(30),
+            "Low": base - np.random.rand(30),
+            "Close": base + np.random.randn(30) * 0.5,
+            "Volume": np.random.randint(1000, 2000, size=30),
+        }
+    )
+
+    print("SMA last:", compute_sma(df_ex["Close"], 5)[-1])
+    print("EMA last:", compute_ema(df_ex["Close"], 5)[-1])
+    print("RSI last:", compute_rsi(df_ex["Close"], 14)[-1])
+    print("MACD last:", compute_macd(df_ex["Close"])['macd'][-1])
+    print("Bollinger upper last:", compute_bollinger_bands(df_ex["Close"])['upper'][-1])
+    print("Stochastic %K last:", compute_stochastic(df_ex["High"], df_ex["Low"], df_ex["Close"])['%K'][-1])
+    print("ATR last:", compute_atr(df_ex["High"], df_ex["Low"], df_ex["Close"])[-1])
+    print("OBV last:", compute_obv(df_ex["Close"], df_ex["Volume"])[-1])
+    print("MFI last:", compute_mfi(df_ex["High"], df_ex["Low"], df_ex["Close"], df_ex["Volume"])[-1])
+    print("VWAP last:", compute_vwap(df_ex["High"], df_ex["Low"], df_ex["Close"], df_ex["Volume"])[-1])
+
+    tf_dict = {"D": df_ex, "W": df_ex.resample("W").last()}
+    print("Trend bias:", compute_mtf_trend_bias(tf_dict))
+    print("Vol profile:", compute_mtf_volatility_profile(tf_dict))
+    corr_input = {k: v["Close"] for k, v in tf_dict.items()}
+    print("Cross correlation:", compute_cross_tf_correlation(corr_input))
+    print("Pivot points keys:", list(compute_pivot_points_per_tf(df_ex).keys()))
+    print("Volume profile bins:", compute_volume_profile(df_ex)["price_bins"][:3])
+    sessions = {"regular": ("09:30", "16:00")}
+    print("Session stats:", compute_session_statistics(df_ex, sessions))
+    print("Decay feats keys:", list(compute_time_decay_features(df_ex).keys()))
+    pats = [
+        {
+            "pattern": "test",
+            "end_date": rng[-1].strftime("%Y-%m-%dT%H:%M:%SZ"),
+        }
+    ]
+    print("Pattern strength:", compute_pattern_strength(pats, {"test": 0.6}))
+    print("ROC last:", compute_rate_of_change(df_ex["Close"], 1)[-1])
+    print("Stats descriptor mean last:", compute_statistical_descriptors(df_ex["Close"])["mean"][-1])
+    print("Risk metrics:", compute_risk_metrics(df_ex["Close"], 1.0, 2.0))
+    print("Liquidity metrics:", compute_liquidity_metrics(df_ex))
 
     SAMPLE_PAYLOAD = {
         "fintech_daily": {
